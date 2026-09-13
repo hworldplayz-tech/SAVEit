@@ -20,7 +20,8 @@ import {
   extractMedia, 
   MediaInfo, 
   getPosterOptions, 
-  downloadSecurely,
+  downloadMediaDirectly,
+  downloadPosterDirectly,
   PosterOption 
 } from '../services/downloaderApi';
 
@@ -71,16 +72,26 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     }
   };
 
-  const handleDownload = async (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
+  const handleDownload = (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
     if (!sourceUrl) return;
     setDownloadingFormat(formatKey);
+    const baseName = media?.title || 'SAVEit-fast';
+    downloadMediaDirectly(sourceUrl, `${baseName}.${fileExtension}`);
+    setTimeout(() => {
+      setDownloadingFormat(null);
+    }, 1200);
+  };
+
+  const handlePosterDownload = async (posterUrl: string | undefined, formatKey: string) => {
+    if (!posterUrl) return;
+    setDownloadingFormat(formatKey);
     try {
-      const baseName = media?.title || 'SAVEit-fast';
-      await downloadSecurely(sourceUrl, `${baseName}.${fileExtension}`);
+      const baseName = media?.title || 'SAVEit-poster';
+      await downloadPosterDirectly(posterUrl, `${baseName}.jpg`);
     } finally {
       setTimeout(() => {
         setDownloadingFormat(null);
-      }, 1500);
+      }, 1200);
     }
   };
 
@@ -436,7 +447,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDownload(poster.url, `poster-${idx}`, 'jpg')}
+                            onClick={() => handlePosterDownload(poster.url, `poster-${idx}`)}
                             className="px-3 py-2 rounded-lg bg-brand hover:bg-red-600 text-white text-xs font-bold flex items-center gap-1 transition-colors"
                           >
                             <Download size={13} />
@@ -503,7 +514,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDownload(previewPoster.url, 'modal-poster-fast', 'jpg')}
+                  onClick={() => handlePosterDownload(previewPoster.url, 'modal-poster-fast')}
                   className="px-4 py-1.5 rounded-lg bg-brand hover:bg-red-600 text-white text-xs font-bold flex items-center gap-1.5"
                 >
                   <Download size={13} />

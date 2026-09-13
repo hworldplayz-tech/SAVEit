@@ -88,49 +88,82 @@ export function getPosterOptions(mediaInfo: MediaInfo, originalUrl: string): Pos
 }
 
 /**
- * Trigger masked download without exposing static href links in the DOM
+ * Instant direct media download (Video & Audio).
+ * Triggers the browser's native download manager immediately without buffering
+ * whole files into memory, and without popup blocking or blank new tabs.
  */
-export async function downloadSecurely(sourceUrl: string, fileName: string): Promise<void> {
+export function downloadMediaDirectly(sourceUrl: string, fileName?: string): void {
   if (!sourceUrl) return;
 
-  // Clean filename
-  const safeName = fileName.replace(/[/\\?%*:|"<>]/g, '-').trim() || 'media';
+  const safeName = fileName 
+    ? fileName.replace(/[/\\?%*:|"<>]/g, '-').trim() 
+    : 'SAVEit-media';
 
-  // Strategy 1: Fetch as blob to download cleanly via in-memory object URL
+  // 1. Create ephemeral anchor element
+  const a = document.createElement('a');
+  a.style.position = 'fixed';
+  a.style.top = '-9999px';
+  a.style.left = '-9999px';
+  a.style.opacity = '0';
+  a.style.pointerEvents = 'none';
+  a.href = sourceUrl;
+  a.setAttribute('download', safeName);
+  
+  // NEVER use target="_blank" - target="_blank" triggers mobile browser popup blockers!
+  // Since the media server sends Content-Disposition: attachment, clicking this anchor in the same frame
+  // immediately hands off to the native browser download manager without navigating away from the page.
+  document.body.appendChild(a);
+  a.click();
+
+  // Safely remove after dispatch
+  setTimeout(() => {
+    if (document.body.contains(a)) {
+      document.body.removeChild(a);
+    }
+  }, 300);
+}
+
+/**
+ * Instant poster image download.
+ * Since images are tiny (~50-100KB), we fetch via blob for a clean .jpg save,
+ * or fallback to direct download anchor if CORS applies.
+ */
+export async function downloadPosterDirectly(imageUrl: string, fileName?: string): Promise<void> {
+  if (!imageUrl) return;
+
+  const safeName = fileName 
+    ? fileName.replace(/[/\\?%*:|"<>]/g, '-').trim() 
+    : 'poster';
+  const fullName = safeName.toLowerCase().endsWith('.jpg') || safeName.toLowerCase().endsWith('.png')
+    ? safeName 
+    : `${safeName}.jpg`;
+
   try {
-    const res = await fetch(sourceUrl, { mode: 'cors' });
+    const res = await fetch(imageUrl);
     if (res.ok) {
       const blob = await res.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.style.display = 'none';
       a.href = blobUrl;
-      a.download = safeName;
+      a.download = fullName;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(blobUrl);
-      document.body.removeChild(a);
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+        if (document.body.contains(a)) document.body.removeChild(a);
+      }, 500);
       return;
     }
   } catch {
-    // If CORS blocks direct blob stream, proceed to transient trigger
+    // If CORS prevents blob, trigger direct browser download
   }
 
-  // Strategy 2: Ephemeral DOM node removed immediately after dispatch
-  const a = document.createElement('a');
-  a.style.display = 'none';
-  a.href = sourceUrl;
-  a.setAttribute('download', safeName);
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    if (document.body.contains(a)) {
-      document.body.removeChild(a);
-    }
-  }, 100);
+  downloadMediaDirectly(imageUrl, fullName);
 }
+
+// Backward compatibility alias
+export const downloadSecurely = downloadMediaDirectly;
 
 /**
  * Robust extraction utility that tries:

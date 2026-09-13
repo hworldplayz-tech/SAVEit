@@ -22,7 +22,8 @@ import {
   extractMedia, 
   MediaInfo, 
   getPosterOptions, 
-  downloadSecurely,
+  downloadMediaDirectly,
+  downloadPosterDirectly,
   PosterOption 
 } from '../services/downloaderApi';
 
@@ -44,7 +45,7 @@ export default function Home({ isDarkMode }: HomeProps) {
   // Poster lightbox preview state
   const [previewPoster, setPreviewPoster] = useState<PosterOption | null>(null);
 
-  // Download in progress state for masked feedback
+  // Download state for immediate visual feedback
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -78,17 +79,40 @@ export default function Home({ isDarkMode }: HomeProps) {
     }
   };
 
-  const handleDownloadAction = async (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
+  /**
+   * Triggers download immediately without delay, memory buffering, or popup blocking.
+   * Runs in the same synchronous user interaction tick.
+   */
+  const handleDownloadAction = (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
     if (!sourceUrl) return;
+
+    // 1. Give immediate visual feedback on the button
+    setDownloadingFormat(formatKey);
+
+    // 2. Synchronous instant trigger to browser's native download manager
+    const baseName = mediaInfo?.title || 'SAVEit-media';
+    const cleanFileName = `${baseName}.${fileExtension}`;
+    downloadMediaDirectly(sourceUrl, cleanFileName);
+
+    // 3. Reset visual feedback after a brief moment
+    setTimeout(() => {
+      setDownloadingFormat(null);
+    }, 1200);
+  };
+
+  /**
+   * Poster image download
+   */
+  const handlePosterDownload = async (posterUrl: string | undefined, formatKey: string) => {
+    if (!posterUrl) return;
     setDownloadingFormat(formatKey);
     try {
-      const baseName = mediaInfo?.title || 'SAVEit-media';
-      const cleanFileName = `${baseName}.${fileExtension}`;
-      await downloadSecurely(sourceUrl, cleanFileName);
+      const baseName = mediaInfo?.title || 'SAVEit-poster';
+      await downloadPosterDirectly(posterUrl, `${baseName}.jpg`);
     } finally {
       setTimeout(() => {
         setDownloadingFormat(null);
-      }, 1500);
+      }, 1200);
     }
   };
 
@@ -288,7 +312,7 @@ export default function Home({ isDarkMode }: HomeProps) {
               <button
                 type="button"
                 onClick={resetForm}
-                className="text-xs font-bold text-zinc-400 hover:text-brand flex items-center gap-1 transition-colors"
+                className="text-xs font-bold text-zinc-400 hover:text-brand flex items-center gap-1 transition-colors cursor-pointer"
               >
                 <RefreshCw size={12} />
                 <span>New Link</span>
@@ -314,7 +338,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                         <button
                           type="button"
                           onClick={() => setIsPlayingPreview(false)}
-                          className="absolute top-2 right-2 bg-black/70 hover:bg-black text-white p-1.5 rounded-full transition-all"
+                          className="absolute top-2 right-2 bg-black/70 hover:bg-black text-white p-1.5 rounded-full transition-all cursor-pointer"
                           title="Close video preview"
                         >
                           <X size={16} />
@@ -339,7 +363,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                           <button
                             type="button"
                             onClick={() => setIsPlayingPreview(true)}
-                            className="absolute inset-0 m-auto w-14 h-14 bg-brand/90 hover:bg-brand text-white rounded-full flex items-center justify-center shadow-xl shadow-red-500/40 hover:scale-110 active:scale-95 transition-all group-hover:opacity-100"
+                            className="absolute inset-0 m-auto w-14 h-14 bg-brand/90 hover:bg-brand text-white rounded-full flex items-center justify-center shadow-xl shadow-red-500/40 hover:scale-110 active:scale-95 transition-all group-hover:opacity-100 cursor-pointer"
                             title="Preview video directly"
                           >
                             <Play size={22} className="ml-1 fill-white" />
@@ -361,7 +385,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                       <button
                         type="button"
                         onClick={() => setIsPlayingPreview(!isPlayingPreview)}
-                        className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-2 transition-all ${
+                        className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-2 transition-all cursor-pointer ${
                           isPlayingPreview
                             ? 'bg-zinc-800 text-white border-zinc-700'
                             : isDarkMode 
@@ -387,7 +411,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                       <button
                         type="button"
                         onClick={() => setPreviewPoster(posterOptions[0])}
-                        className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                        className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                           isDarkMode 
                             ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300' 
                             : 'bg-zinc-100 hover:bg-zinc-200 border-zinc-200 text-zinc-700'
@@ -420,7 +444,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                       type="button"
                       onClick={() => setActiveTab('video')}
                       disabled={!mediaInfo.videoUrl && (!mediaInfo.qualities || mediaInfo.qualities.length === 0)}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer ${
                         activeTab === 'video'
                           ? 'bg-brand text-white shadow-md shadow-brand/20'
                           : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
@@ -434,7 +458,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                       type="button"
                       onClick={() => setActiveTab('audio')}
                       disabled={!mediaInfo.audioUrl && !mediaInfo.musicUrl}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer ${
                         activeTab === 'audio'
                           ? 'bg-brand text-white shadow-md shadow-brand/20'
                           : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
@@ -448,7 +472,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                       type="button"
                       onClick={() => setActiveTab('poster')}
                       disabled={posterOptions.length === 0}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer ${
                         activeTab === 'poster'
                           ? 'bg-brand text-white shadow-md shadow-brand/20'
                           : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
@@ -468,12 +492,11 @@ export default function Home({ isDarkMode }: HomeProps) {
                           id="main-download-video-btn"
                           type="button"
                           onClick={() => handleDownloadAction(mediaInfo.videoUrl, 'video-primary', 'mp4')}
-                          disabled={downloadingFormat === 'video-primary'}
-                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 disabled:opacity-75 cursor-pointer"
+                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
                         >
                           {downloadingFormat === 'video-primary' ? (
                             <>
-                              <RefreshCw size={20} className="animate-spin" />
+                              <CheckCircle2 size={20} className="text-white animate-bounce" />
                               <span>Starting Download...</span>
                             </>
                           ) : (
@@ -509,7 +532,6 @@ export default function Home({ isDarkMode }: HomeProps) {
                                   key={idx}
                                   type="button"
                                   onClick={() => handleDownloadAction(q.url, qualityKey, 'mp4')}
-                                  disabled={isThisDownloading}
                                   className={`py-2.5 px-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center justify-between group cursor-pointer ${
                                     isDarkMode 
                                       ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-200' 
@@ -526,7 +548,7 @@ export default function Home({ isDarkMode }: HomeProps) {
 
                                   <div className="w-7 h-7 rounded-lg bg-brand/10 text-brand flex items-center justify-center group-hover:bg-brand group-hover:text-white transition-colors">
                                     {isThisDownloading ? (
-                                      <RefreshCw size={13} className="animate-spin" />
+                                      <CheckCircle2 size={14} className="text-emerald-500" />
                                     ) : (
                                       <Download size={13} />
                                     )}
@@ -547,12 +569,11 @@ export default function Home({ isDarkMode }: HomeProps) {
                           id="main-download-audio-btn"
                           type="button"
                           onClick={() => handleDownloadAction(mediaInfo.audioUrl || mediaInfo.musicUrl, 'audio-primary', 'mp3')}
-                          disabled={downloadingFormat === 'audio-primary'}
-                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 disabled:opacity-75 cursor-pointer"
+                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
                         >
                           {downloadingFormat === 'audio-primary' ? (
                             <>
-                              <RefreshCw size={20} className="animate-spin" />
+                              <CheckCircle2 size={20} className="text-white animate-bounce" />
                               <span>Starting Download...</span>
                             </>
                           ) : (
@@ -601,7 +622,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                                 <button
                                   type="button"
                                   onClick={() => setPreviewPoster(poster)}
-                                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                                     isDarkMode 
                                       ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700' 
                                       : 'bg-white hover:bg-zinc-100 text-zinc-800 border-zinc-200'
@@ -613,12 +634,11 @@ export default function Home({ isDarkMode }: HomeProps) {
 
                                 <button
                                   type="button"
-                                  onClick={() => handleDownloadAction(poster.url, posterKey, 'jpg')}
-                                  disabled={isThisDownloading}
+                                  onClick={() => handlePosterDownload(poster.url, posterKey)}
                                   className="flex-1 py-2 px-2.5 rounded-lg text-xs font-bold bg-brand hover:bg-red-600 text-white flex items-center justify-center gap-1.5 shadow-sm shadow-red-500/20 transition-all cursor-pointer"
                                 >
                                   {isThisDownloading ? (
-                                    <RefreshCw size={13} className="animate-spin" />
+                                    <CheckCircle2 size={13} className="text-white" />
                                   ) : (
                                     <Download size={13} />
                                   )}
@@ -721,7 +741,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                 <button
                   type="button"
                   onClick={() => setPreviewPoster(null)}
-                  className="p-1.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                  className="p-1.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer"
                 >
                   <X size={18} />
                 </button>
@@ -739,14 +759,14 @@ export default function Home({ isDarkMode }: HomeProps) {
                 <button
                   type="button"
                   onClick={() => setPreviewPoster(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-300"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-300 cursor-pointer"
                 >
                   Close
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDownloadAction(previewPoster.url, 'modal-poster', 'jpg')}
-                  className="bg-brand hover:bg-red-600 text-white px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-red-500/20"
+                  onClick={() => handlePosterDownload(previewPoster.url, 'modal-poster')}
+                  className="bg-brand hover:bg-red-600 text-white px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-red-500/20 cursor-pointer"
                 >
                   <Download size={14} />
                   <span>Download Image</span>
