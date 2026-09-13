@@ -1,0 +1,53 @@
+/* Savnow Widget Overrides */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;800&display=swap');
+
+body {
+  background: transparent !important;
+  font-family: 'Inter', sans-serif !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: flex-start !important;
+  margin: 0 !important;
+  padding: 20px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Ensure the main widget card is centered and responsive */
+.card, .container, .main-container, #widget-container {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  width: 100% !important;
+  max-width: 500px !important;
+  margin: 0 auto !important;
+  display: block !important;
+  text-align: center !important;
+}
+
+/* Center all children of the card */
+.card-body, .form-group, .input-group {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+/* Primary Download Button Style */
+.btn-primary, .download-btn, button[type="submit"], .btn {
+  background-color: #ff0000 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+  border-radius: 12px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  border: none !important;
+  padding: 14px 28px !important;
+  transition: all 0.3s ease !important;
+  box-shadow: 0 10px 20px -10px rgba(255, 0, 0, 0.5) !important;
+  cursor: pointer !important;
+  margin: 10px auto !important;
+}

@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/api/alldl", "destination": "https://ahm7xmakki.com/api/alldl" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

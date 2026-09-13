@@ -1,0 +1,6 @@
+{
+  "name": "SAVEit",
+  "description": "Fast, free multi-platform video and audio downloader powered by LinkShare.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
