@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react';
+import { useState, FormEvent, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -8,14 +8,23 @@ import {
   ArrowRight, 
   Music, 
   Video, 
-  Copy, 
-  Check, 
   RefreshCw, 
-  ExternalLink,
   Share2,
-  AlertCircle
+  AlertCircle,
+  Play,
+  Image as ImageIcon,
+  Eye,
+  X,
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
-import { extractMedia, MediaInfo } from '../services/downloaderApi';
+import { 
+  extractMedia, 
+  MediaInfo, 
+  getPosterOptions, 
+  downloadSecurely,
+  PosterOption 
+} from '../services/downloaderApi';
 
 interface HomeProps {
   isDarkMode: boolean;
@@ -23,11 +32,20 @@ interface HomeProps {
 
 export default function Home({ isDarkMode }: HomeProps) {
   const [url, setUrl] = useState('');
+  const [submittedUrl, setSubmittedUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [activeTab, setActiveTab] = useState<'video' | 'audio'>('video');
+  const [activeTab, setActiveTab] = useState<'video' | 'audio' | 'poster'>('video');
+  
+  // Video preview player state
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  
+  // Poster lightbox preview state
+  const [previewPoster, setPreviewPoster] = useState<PosterOption | null>(null);
+
+  // Download in progress state for masked feedback
+  const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -36,7 +54,9 @@ export default function Home({ isDarkMode }: HomeProps) {
     setLoading(true);
     setError(null);
     setMediaInfo(null);
-    setCopiedLink(false);
+    setIsPlayingPreview(false);
+    setPreviewPoster(null);
+    setSubmittedUrl(url.trim());
 
     try {
       const response = await extractMedia(url.trim());
@@ -58,17 +78,34 @@ export default function Home({ isDarkMode }: HomeProps) {
     }
   };
 
-  const handleCopyLink = (linkUrl: string) => {
-    navigator.clipboard.writeText(linkUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+  const handleDownloadAction = async (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
+    if (!sourceUrl) return;
+    setDownloadingFormat(formatKey);
+    try {
+      const baseName = mediaInfo?.title || 'SAVEit-media';
+      const cleanFileName = `${baseName}.${fileExtension}`;
+      await downloadSecurely(sourceUrl, cleanFileName);
+    } finally {
+      setTimeout(() => {
+        setDownloadingFormat(null);
+      }, 1500);
+    }
   };
 
   const resetForm = () => {
     setUrl('');
+    setSubmittedUrl('');
     setMediaInfo(null);
     setError(null);
+    setIsPlayingPreview(false);
+    setPreviewPoster(null);
   };
+
+  // Compute available poster options
+  const posterOptions = useMemo(() => {
+    if (!mediaInfo) return [];
+    return getPosterOptions(mediaInfo, submittedUrl);
+  }, [mediaInfo, submittedUrl]);
 
   return (
     <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-12 md:py-20">
@@ -92,7 +129,7 @@ export default function Home({ isDarkMode }: HomeProps) {
         </h1>
 
         <p className={`text-base sm:text-lg md:text-xl font-medium max-w-xl mx-auto ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-          Paste any YouTube, TikTok, Instagram, Twitter/X, or Facebook link for instant, high-speed MP4 & MP3 downloads.
+          Paste any YouTube, TikTok, Instagram, Twitter/X, or Facebook link for instant, high-speed MP4, MP3 & poster downloads.
         </p>
 
         {/* Platform tags */}
@@ -161,7 +198,7 @@ export default function Home({ isDarkMode }: HomeProps) {
 
         {/* Quick helper tip */}
         <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 mt-3 px-2">
-          <span>Supported: Direct MP4 videos, MP3 audio, 1080p, 720p, 480p</span>
+          <span>Supported: High-Res MP4, MP3 Audio, HD Posters & Qualities</span>
           <button
             type="button"
             onClick={() => setUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ')}
@@ -185,7 +222,7 @@ export default function Home({ isDarkMode }: HomeProps) {
             <RefreshCw className="animate-spin" size={26} />
           </div>
           <h3 className="text-xl font-black mb-1">Extracting Stream Media...</h3>
-          <p className="text-sm text-zinc-500 font-medium">Resolving high-speed direct download links</p>
+          <p className="text-sm text-zinc-500 font-medium">Resolving high-speed direct download links and HD posters</p>
         </motion.div>
       )}
 
@@ -260,26 +297,108 @@ export default function Home({ isDarkMode }: HomeProps) {
 
             {/* Media Content Body */}
             <div className="p-6 sm:p-8 md:p-10">
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
-                {/* Thumbnail Preview */}
-                <div className="md:col-span-5 relative group overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-md">
-                  {mediaInfo.thumbnail || mediaInfo.coverImage ? (
-                    <img 
-                      src={mediaInfo.thumbnail || mediaInfo.coverImage} 
-                      alt={mediaInfo.title || 'Media preview'}
-                      className="w-full aspect-video object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-                  ) : (
-                    <div className="w-full aspect-video bg-zinc-800 flex items-center justify-center">
-                      <Video className="text-zinc-600" size={48} />
-                    </div>
-                  )}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+                
+                {/* Visual Preview / Video Player Container */}
+                <div className="md:col-span-5 flex flex-col gap-3">
+                  <div className="relative group overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-md bg-black">
+                    {isPlayingPreview && mediaInfo.videoUrl ? (
+                      <div className="relative aspect-video w-full bg-black flex flex-col items-center justify-center">
+                        <video 
+                          src={mediaInfo.videoUrl} 
+                          controls 
+                          autoPlay 
+                          playsInline
+                          className="w-full h-full object-contain"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setIsPlayingPreview(false)}
+                          className="absolute top-2 right-2 bg-black/70 hover:bg-black text-white p-1.5 rounded-full transition-all"
+                          title="Close video preview"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="relative aspect-video w-full">
+                        {mediaInfo.thumbnail || mediaInfo.coverImage ? (
+                          <img 
+                            src={mediaInfo.thumbnail || mediaInfo.coverImage} 
+                            alt={mediaInfo.title || 'Media preview'}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
+                            <Video className="text-zinc-600" size={48} />
+                          </div>
+                        )}
 
-                  {mediaInfo.duration && (
-                    <span className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-mono font-bold px-2 py-0.5 rounded">
-                      {mediaInfo.duration}
-                    </span>
-                  )}
+                        {/* Interactive Play Overlay Button for Video Preview */}
+                        {mediaInfo.videoUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setIsPlayingPreview(true)}
+                            className="absolute inset-0 m-auto w-14 h-14 bg-brand/90 hover:bg-brand text-white rounded-full flex items-center justify-center shadow-xl shadow-red-500/40 hover:scale-110 active:scale-95 transition-all group-hover:opacity-100"
+                            title="Preview video directly"
+                          >
+                            <Play size={22} className="ml-1 fill-white" />
+                          </button>
+                        )}
+
+                        {mediaInfo.duration && (
+                          <span className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-mono font-bold px-2 py-0.5 rounded">
+                            {mediaInfo.duration}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Toggle Preview / Full Poster Action underneath player */}
+                  <div className="flex gap-2">
+                    {mediaInfo.videoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setIsPlayingPreview(!isPlayingPreview)}
+                        className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-2 transition-all ${
+                          isPlayingPreview
+                            ? 'bg-zinc-800 text-white border-zinc-700'
+                            : isDarkMode 
+                              ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300' 
+                              : 'bg-zinc-100 hover:bg-zinc-200 border-zinc-200 text-zinc-700'
+                        }`}
+                      >
+                        {isPlayingPreview ? (
+                          <>
+                            <X size={14} />
+                            <span>Stop Preview</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play size={14} className="text-brand fill-brand" />
+                            <span>Watch Preview</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    {posterOptions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPoster(posterOptions[0])}
+                        className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                          isDarkMode 
+                            ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300' 
+                            : 'bg-zinc-100 hover:bg-zinc-200 border-zinc-200 text-zinc-700'
+                        }`}
+                        title="View Full Poster"
+                      >
+                        <Eye size={14} />
+                        <span>Poster</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Info & Options */}
@@ -295,127 +414,235 @@ export default function Home({ isDarkMode }: HomeProps) {
                     ) : null}
                   </div>
 
-                  {/* Format Tabs (Video vs Audio) */}
-                  <div className="flex gap-2 p-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 mb-6 max-w-xs">
+                  {/* Format Navigation Tabs (Video, Audio, Poster) */}
+                  <div className="flex gap-2 p-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 mb-6">
                     <button
                       type="button"
                       onClick={() => setActiveTab('video')}
                       disabled={!mediaInfo.videoUrl && (!mediaInfo.qualities || mediaInfo.qualities.length === 0)}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-black transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all ${
                         activeTab === 'video'
                           ? 'bg-brand text-white shadow-md shadow-brand/20'
                           : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
                       }`}
                     >
                       <Video size={14} />
-                      <span>Video (MP4)</span>
+                      <span>Video</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setActiveTab('audio')}
                       disabled={!mediaInfo.audioUrl && !mediaInfo.musicUrl}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-black transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all ${
                         activeTab === 'audio'
                           ? 'bg-brand text-white shadow-md shadow-brand/20'
                           : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
                       }`}
                     >
                       <Music size={14} />
-                      <span>Audio (MP3)</span>
+                      <span>Audio</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('poster')}
+                      disabled={posterOptions.length === 0}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all ${
+                        activeTab === 'poster'
+                          ? 'bg-brand text-white shadow-md shadow-brand/20'
+                          : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <ImageIcon size={14} />
+                      <span>Poster ({posterOptions.length})</span>
                     </button>
                   </div>
 
                   {/* Action Section */}
-                  {activeTab === 'video' ? (
+                  {activeTab === 'video' && (
                     <div className="space-y-4">
+                      {/* Primary Video Download Button */}
                       {mediaInfo.videoUrl ? (
-                        <a
+                        <button
                           id="main-download-video-btn"
-                          href={mediaInfo.videoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          download
-                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95"
+                          type="button"
+                          onClick={() => handleDownloadAction(mediaInfo.videoUrl, 'video-primary', 'mp4')}
+                          disabled={downloadingFormat === 'video-primary'}
+                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 disabled:opacity-75 cursor-pointer"
                         >
-                          <Download size={20} />
-                          <span>Download Video (High Quality)</span>
-                        </a>
+                          {downloadingFormat === 'video-primary' ? (
+                            <>
+                              <RefreshCw size={20} className="animate-spin" />
+                              <span>Starting Download...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download size={20} />
+                              <span>Download Video (High Quality MP4)</span>
+                            </>
+                          )}
+                        </button>
                       ) : (
                         <p className="text-sm text-amber-500 font-semibold">Video stream available below via quality options.</p>
                       )}
 
-                      {/* Quality Variants list if available */}
+                      {/* Video Qualities Section if multiple options are available */}
                       {mediaInfo.qualities && mediaInfo.qualities.length > 0 && (
                         <div className="pt-2">
-                          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block mb-2">
-                            Select Quality Variant:
-                          </span>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                            {mediaInfo.qualities.map((q, idx) => (
-                              <a
-                                key={idx}
-                                href={q.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                download
-                                className={`py-2 px-3 rounded-lg border text-center text-xs font-bold transition-all flex items-center justify-between ${
-                                  isDarkMode 
-                                    ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-200' 
-                                    : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200 text-zinc-800'
-                                }`}
-                              >
-                                <span>{q.quality || 'Standard'}</span>
-                                <Download size={13} className="text-brand" />
-                              </a>
-                            ))}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-zinc-400">
+                              Available Resolutions & Qualities:
+                            </span>
+                            <span className="text-[10px] font-bold text-brand bg-brand/10 px-2 py-0.5 rounded">
+                              {mediaInfo.qualities.length} Options
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                            {mediaInfo.qualities.map((q, idx) => {
+                              const qualityKey = `quality-${idx}-${q.quality}`;
+                              const isThisDownloading = downloadingFormat === qualityKey;
+
+                              return (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => handleDownloadAction(q.url, qualityKey, 'mp4')}
+                                  disabled={isThisDownloading}
+                                  className={`py-2.5 px-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center justify-between group cursor-pointer ${
+                                    isDarkMode 
+                                      ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-200' 
+                                      : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200 text-zinc-800'
+                                  }`}
+                                >
+                                  <div>
+                                    <div className="font-black text-sm flex items-center gap-1">
+                                      <span>{q.quality || 'Standard'}</span>
+                                      <Sparkles size={11} className="text-brand opacity-60" />
+                                    </div>
+                                    <span className="text-[10px] text-zinc-500 font-medium">MP4 Video</span>
+                                  </div>
+
+                                  <div className="w-7 h-7 rounded-lg bg-brand/10 text-brand flex items-center justify-center group-hover:bg-brand group-hover:text-white transition-colors">
+                                    {isThisDownloading ? (
+                                      <RefreshCw size={13} className="animate-spin" />
+                                    ) : (
+                                      <Download size={13} />
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
                     </div>
-                  ) : (
+                  )}
+
+                  {activeTab === 'audio' && (
                     <div className="space-y-4">
                       {mediaInfo.audioUrl || mediaInfo.musicUrl ? (
-                        <a
+                        <button
                           id="main-download-audio-btn"
-                          href={mediaInfo.audioUrl || mediaInfo.musicUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          download
-                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95"
+                          type="button"
+                          onClick={() => handleDownloadAction(mediaInfo.audioUrl || mediaInfo.musicUrl, 'audio-primary', 'mp3')}
+                          disabled={downloadingFormat === 'audio-primary'}
+                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 disabled:opacity-75 cursor-pointer"
                         >
-                          <Music size={20} />
-                          <span>Download Audio (MP3)</span>
-                        </a>
+                          {downloadingFormat === 'audio-primary' ? (
+                            <>
+                              <RefreshCw size={20} className="animate-spin" />
+                              <span>Starting Download...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Music size={20} />
+                              <span>Download Audio (MP3 320kbps)</span>
+                            </>
+                          )}
+                        </button>
                       ) : (
-                        <p className="text-sm text-zinc-400">Audio-only stream is not available for this link.</p>
+                        <p className="text-sm text-zinc-400">Audio-only stream is not available for this specific link.</p>
                       )}
                     </div>
                   )}
 
-                  {/* Copy link or open direct */}
-                  <div className="flex items-center gap-3 mt-6 pt-4 border-t border-zinc-100 dark:border-zinc-800/80">
-                    <button
-                      type="button"
-                      onClick={() => handleCopyLink(activeTab === 'video' ? (mediaInfo.videoUrl || '') : (mediaInfo.audioUrl || ''))}
-                      className="text-xs font-bold text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 inline-flex items-center gap-1.5 transition-colors"
-                    >
-                      {copiedLink ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                      <span>{copiedLink ? 'Direct Link Copied!' : 'Copy Direct Stream URL'}</span>
-                    </button>
+                  {activeTab === 'poster' && (
+                    <div className="space-y-3">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-zinc-400 block mb-1">
+                        Download or Preview Official Poster / Cover Art:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {posterOptions.map((poster, idx) => {
+                          const posterKey = `poster-${idx}`;
+                          const isThisDownloading = downloadingFormat === posterKey;
 
-                    <span className="text-zinc-400">•</span>
+                          return (
+                            <div 
+                              key={idx}
+                              className={`p-3.5 rounded-2xl border flex flex-col justify-between gap-3 ${
+                                isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <img 
+                                  src={poster.url} 
+                                  alt={poster.label}
+                                  className="w-14 h-10 object-cover rounded-lg border border-zinc-700/50 shrink-0" 
+                                />
+                                <div>
+                                  <h4 className="text-xs font-black tracking-tight">{poster.label}</h4>
+                                  <span className="text-[10px] text-zinc-500 font-mono">{poster.resolution}</span>
+                                </div>
+                              </div>
 
-                    <a
-                      href={activeTab === 'video' ? mediaInfo.videoUrl : (mediaInfo.audioUrl || mediaInfo.videoUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-bold text-zinc-500 hover:text-brand inline-flex items-center gap-1.5 transition-colors"
-                    >
-                      <ExternalLink size={14} />
-                      <span>Open in Browser</span>
-                    </a>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewPoster(poster)}
+                                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                                    isDarkMode 
+                                      ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700' 
+                                      : 'bg-white hover:bg-zinc-100 text-zinc-800 border-zinc-200'
+                                  }`}
+                                >
+                                  <Eye size={13} />
+                                  <span>Preview</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadAction(poster.url, posterKey, 'jpg')}
+                                  disabled={isThisDownloading}
+                                  className="flex-1 py-2 px-2.5 rounded-lg text-xs font-bold bg-brand hover:bg-red-600 text-white flex items-center justify-center gap-1.5 shadow-sm shadow-red-500/20 transition-all cursor-pointer"
+                                >
+                                  {isThisDownloading ? (
+                                    <RefreshCw size={13} className="animate-spin" />
+                                  ) : (
+                                    <Download size={13} />
+                                  )}
+                                  <span>Download</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Footer status notice */}
+                  <div className="flex items-center justify-between mt-6 pt-4 border-t border-zinc-100 dark:border-zinc-800/80 text-[11px] font-medium text-zinc-500">
+                    <span className="flex items-center gap-1.5">
+                      <CheckCircle2 size={13} className="text-emerald-500" />
+                      <span>Encrypted direct extraction stream</span>
+                    </span>
+                    <span className="font-mono text-[10px] uppercase">
+                      LinkShare Protected
+                    </span>
                   </div>
+
                 </div>
               </div>
             </div>
@@ -430,18 +657,18 @@ export default function Home({ isDarkMode }: HomeProps) {
             {[
               { 
                 icon: Zap, 
-                title: "Ultra-Fast API", 
-                text: "Extract direct MP4 video and MP3 audio streams in seconds with no wait times." 
+                title: "Live Video Preview", 
+                text: "Watch and verify videos before downloading right inside our responsive player." 
               },
               { 
                 icon: ShieldCheck, 
-                title: "100% Free & No Ads", 
-                text: "Clean, direct downloading experience with zero interstitial ads or redirects." 
+                title: "HD Poster Extraction", 
+                text: "Download official 1080p YouTube posters and social media cover art in full resolution." 
               },
               { 
                 icon: Share2, 
-                title: "All Platforms", 
-                text: "Full support for YouTube, TikTok without watermark, Instagram Reels, and Twitter." 
+                title: "Multiple Qualities", 
+                text: "Select your preferred resolution from 1080p, 720p, 480p, down to crystal-clear 320kbps MP3s." 
               }
             ].map((f, i) => (
               <div 
@@ -461,6 +688,71 @@ export default function Home({ isDarkMode }: HomeProps) {
                 </p>
               </div>
             ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Poster Preview Modal Lightbox */}
+      <AnimatePresence>
+        {previewPoster && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6"
+            onClick={() => setPreviewPoster(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className={`max-w-2xl w-full rounded-3xl overflow-hidden border shadow-2xl ${
+                isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+              }`}
+            >
+              <div className={`p-4 flex items-center justify-between border-b ${
+                isDarkMode ? 'border-zinc-800' : 'border-zinc-200'
+              }`}>
+                <div>
+                  <h3 className="text-sm font-black">{previewPoster.label}</h3>
+                  <span className="text-[10px] text-zinc-500 font-mono">{previewPoster.resolution}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPoster(null)}
+                  className="p-1.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-4 bg-black flex items-center justify-center">
+                <img 
+                  src={previewPoster.url} 
+                  alt={previewPoster.label} 
+                  className="max-h-[60vh] w-auto object-contain rounded-lg"
+                />
+              </div>
+
+              <div className="p-4 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPreviewPoster(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-300"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadAction(previewPoster.url, 'modal-poster', 'jpg')}
+                  className="bg-brand hover:bg-red-600 text-white px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-red-500/20"
+                >
+                  <Download size={14} />
+                  <span>Download Image</span>
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
