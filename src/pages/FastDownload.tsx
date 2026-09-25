@@ -1,4 +1,4 @@
-import { useState, FormEvent, useMemo } from 'react';
+import { useState, FormEvent, useMemo, MouseEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -14,7 +14,9 @@ import {
   Image as ImageIcon,
   Eye,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Copy,
+  Check
 } from 'lucide-react';
 import { 
   extractMedia, 
@@ -22,7 +24,9 @@ import {
   getPosterOptions, 
   downloadMediaDirectly,
   downloadPosterDirectly,
-  PosterOption 
+  copyToClipboard,
+  PosterOption,
+  EngineChoice
 } from '../services/downloaderApi';
 
 interface FastDownloadProps {
@@ -42,6 +46,19 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
   const [previewPoster, setPreviewPoster] = useState<PosterOption | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
 
+  // Engine selection state & copy link state
+  const [selectedEngine, setSelectedEngine] = useState<EngineChoice>('auto');
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
+  const handleCopy = async (text: string, e?: MouseEvent) => {
+    if (e) e.stopPropagation();
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopiedUrl(text);
+      setTimeout(() => setCopiedUrl(null), 1600);
+    }
+  };
+
   const fetchDownload = async (e: FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
@@ -54,7 +71,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     setSubmittedUrl(url.trim());
 
     try {
-      const response = await extractMedia(url.trim());
+      const response = await extractMedia(url.trim(), selectedEngine);
       if (response && response.mediaInfo) {
         setMedia(response.mediaInfo);
         if (!response.mediaInfo.videoUrl && response.mediaInfo.audioUrl) {
@@ -126,6 +143,59 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
 
       {/* Pro Search Bar */}
       <div className="max-w-2xl mx-auto mb-20">
+        {/* Engine Selector */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
+          <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mr-1">
+            Engine:
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedEngine('auto')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              selectedEngine === 'auto'
+                ? 'bg-brand text-white shadow-md shadow-brand/20'
+                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+            }`}
+          >
+            <Zap size={13} />
+            <span>Auto (F2 → F1 → Standard)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedEngine('f-engine-2')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              selectedEngine === 'f-engine-2'
+                ? 'bg-brand text-white shadow-md shadow-brand/20'
+                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+            }`}
+          >
+            <Sparkles size={13} className={selectedEngine === 'f-engine-2' ? 'text-yellow-200' : 'text-amber-400'} />
+            <span>F-Engine 2 (AllDL)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedEngine('f-engine-1')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              selectedEngine === 'f-engine-1'
+                ? 'bg-brand text-white shadow-md shadow-brand/20'
+                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+            }`}
+          >
+            <span>F-Engine 1</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedEngine('standard')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              selectedEngine === 'standard'
+                ? 'bg-brand text-white shadow-md shadow-brand/20'
+                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+            }`}
+          >
+            <span>Standard Engine</span>
+          </button>
+        </div>
+
         <form onSubmit={fetchDownload} className="relative group">
           <div className={`absolute -inset-1 bg-gradient-to-r from-brand to-red-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000 ${isLoading ? 'opacity-0' : ''}`}></div>
           <div className={`relative flex flex-col md:flex-row gap-2 p-2.5 rounded-2xl ${isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'} border shadow-xl`}>
@@ -196,16 +266,22 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
             animate={{ opacity: 1, y: 0 }}
             className={`rounded-[32px] overflow-hidden border shadow-3xl ${isDarkMode ? 'border-zinc-800 bg-[#0c0c0c]' : 'border-zinc-100 bg-zinc-50 shadow-zinc-200/50'}`}
           >
-            <div className={`px-8 py-5 flex items-center justify-between border-b ${isDarkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
-              <div className="flex items-center gap-3">
+            <div className={`px-8 py-5 flex flex-wrap items-center justify-between gap-3 border-b ${isDarkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
+              <div className="flex flex-wrap items-center gap-2.5">
                 <CheckCircle2 className="text-green-500 w-5 h-5" />
                 <span className="text-[10px] font-black uppercase tracking-[2px] opacity-50">Stream Extracted</span>
+                {media.platform && (
+                  <div className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-brand/10 text-brand">
+                    {media.platform}
+                  </div>
+                )}
+                {media.sourceEngine && (
+                  <div className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    <Sparkles size={10} />
+                    <span>{media.sourceEngine}</span>
+                  </div>
+                )}
               </div>
-              {media.platform && (
-                <div className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-brand/10 text-brand">
-                  {media.platform}
-                </div>
-              )}
             </div>
             
             <div className="p-8 md:p-12 flex flex-col items-center">
@@ -332,52 +408,116 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                 {activeTab === 'video' && (
                   <div className="space-y-4">
                     {media.videoUrl && (
-                      <button 
-                        type="button"
-                        onClick={() => handleDownload(media.videoUrl, 'fast-video', 'mp4')}
-                        disabled={downloadingFormat === 'fast-video'}
-                        className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-red-500/30 transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75"
-                      >
-                        {downloadingFormat === 'fast-video' ? (
-                          <>
-                            <RefreshCw size={18} className="animate-spin" />
-                            <span>Downloading...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Video size={18} />
-                            <span>Download Video (MP4)</span>
-                          </>
-                        )}
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => handleDownload(media.videoUrl, 'fast-video', 'mp4')}
+                          disabled={downloadingFormat === 'fast-video'}
+                          className="flex-1 bg-brand hover:bg-red-600 text-white font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-red-500/30 transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75"
+                        >
+                          {downloadingFormat === 'fast-video' ? (
+                            <>
+                              <RefreshCw size={18} className="animate-spin" />
+                              <span>Downloading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Video size={18} />
+                              <span>Download Video (MP4)</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopy(media.videoUrl!, e)}
+                          className={`px-4 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
+                            copiedUrl === media.videoUrl
+                              ? 'bg-emerald-500 text-white border-emerald-600'
+                              : isDarkMode
+                                ? 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300'
+                                : 'bg-zinc-200 hover:bg-zinc-300 border-zinc-300 text-zinc-700'
+                          }`}
+                          title="Copy Direct Video Link"
+                        >
+                          {copiedUrl === media.videoUrl ? <Check size={16} /> : <Copy size={16} />}
+                        </button>
+                      </div>
                     )}
 
                     {/* Qualities if available */}
                     {media.qualities && media.qualities.length > 0 && (
                       <div className="pt-2">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block mb-2 text-center">
-                          Quality Options:
-                        </span>
-                        <div className="grid grid-cols-2 gap-2">
-                          {media.qualities.map((q, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => handleDownload(q.url, `fast-q-${idx}`, 'mp4')}
-                              disabled={downloadingFormat === `fast-q-${idx}`}
-                              className={`p-3 rounded-xl border flex items-center justify-between text-xs font-bold transition-all ${
-                                isDarkMode 
-                                  ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-white' 
-                                  : 'bg-white hover:bg-zinc-100 border-zinc-200 text-zinc-900'
-                              }`}
-                            >
-                              <div className="flex items-center gap-1">
-                                <span>{q.quality || 'Standard'}</span>
-                                <Sparkles size={11} className="text-brand opacity-60" />
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">
+                            Quality Options:
+                          </span>
+                          <span className="text-[10px] font-bold text-brand bg-brand/10 px-2 py-0.5 rounded">
+                            {media.qualities.length} Resolutions
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {media.qualities.map((q, idx) => {
+                            const isThisDownloading = downloadingFormat === `fast-q-${idx}`;
+                            const isThisCopied = copiedUrl === q.url;
+
+                            return (
+                              <div
+                                key={idx}
+                                className={`p-3 rounded-xl border flex items-center justify-between text-xs font-bold transition-all ${
+                                  isDarkMode 
+                                    ? 'bg-zinc-900 border-zinc-800 text-white' 
+                                    : 'bg-white border-zinc-200 text-zinc-900'
+                                }`}
+                              >
+                                <div className="min-w-0 pr-2">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span>{q.quality || 'Standard'}</span>
+                                    {q.tier && (
+                                      <span className="text-[9px] px-1 py-0.5 rounded bg-brand/10 text-brand font-black">
+                                        {q.tier}
+                                      </span>
+                                    )}
+                                    {q.noWatermark && (
+                                      <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-black">
+                                        Clean
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-zinc-500 block mt-0.5">{q.container || 'MP4'}</span>
+                                </div>
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleCopy(q.url, e)}
+                                    className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                      isThisCopied
+                                        ? 'bg-emerald-500 text-white border-emerald-600'
+                                        : isDarkMode
+                                          ? 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300'
+                                          : 'bg-zinc-100 hover:bg-zinc-200 border-zinc-300 text-zinc-600'
+                                    }`}
+                                    title="Copy direct link"
+                                  >
+                                    {isThisCopied ? <Check size={13} /> : <Copy size={13} />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownload(q.url, `fast-q-${idx}`, (q.container || 'mp4').toLowerCase())}
+                                    disabled={isThisDownloading}
+                                    className="p-1.5 rounded-lg bg-brand hover:bg-red-600 text-white transition-all cursor-pointer shadow-sm active:scale-95"
+                                    title="Download resolution"
+                                  >
+                                    {isThisDownloading ? (
+                                      <CheckCircle2 size={13} className="animate-bounce" />
+                                    ) : (
+                                      <Download size={13} />
+                                    )}
+                                  </button>
+                                </div>
                               </div>
-                              <Download size={13} className="text-brand" />
-                            </button>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -387,28 +527,44 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                 {activeTab === 'audio' && (
                   <div>
                     {(media.audioUrl || media.musicUrl) ? (
-                      <button 
-                        type="button"
-                        onClick={() => handleDownload(media.audioUrl || media.musicUrl, 'fast-audio', 'mp3')}
-                        disabled={downloadingFormat === 'fast-audio'}
-                        className={`w-full font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 border transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75 ${
-                          isDarkMode 
-                            ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700' 
-                            : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-900 border-zinc-300'
-                        }`}
-                      >
-                        {downloadingFormat === 'fast-audio' ? (
-                          <>
-                            <RefreshCw size={18} className="animate-spin" />
-                            <span>Downloading...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Music size={18} />
-                            <span>Download Audio (MP3)</span>
-                          </>
-                        )}
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => handleDownload(media.audioUrl || media.musicUrl, 'fast-audio', 'mp3')}
+                          disabled={downloadingFormat === 'fast-audio'}
+                          className={`flex-1 font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 border transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75 ${
+                            isDarkMode 
+                              ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700' 
+                              : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-900 border-zinc-300'
+                          }`}
+                        >
+                          {downloadingFormat === 'fast-audio' ? (
+                            <>
+                              <RefreshCw size={18} className="animate-spin" />
+                              <span>Downloading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Music size={18} />
+                              <span>Download Audio (MP3)</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopy((media.audioUrl || media.musicUrl)!, e)}
+                          className={`px-4 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
+                            copiedUrl === (media.audioUrl || media.musicUrl)
+                              ? 'bg-emerald-500 text-white border-emerald-600'
+                              : isDarkMode
+                                ? 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300'
+                                : 'bg-zinc-200 hover:bg-zinc-300 border-zinc-300 text-zinc-700'
+                          }`}
+                          title="Copy Audio Link"
+                        >
+                          {copiedUrl === (media.audioUrl || media.musicUrl) ? <Check size={16} /> : <Copy size={16} />}
+                        </button>
+                      </div>
                     ) : (
                       <p className="text-sm text-zinc-400 text-center">Audio stream unavailable.</p>
                     )}

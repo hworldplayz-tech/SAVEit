@@ -1,6 +1,21 @@
 export interface MediaQuality {
   quality: string;
   url: string;
+  downloadUrl?: string;
+  streamUrl?: string;
+  rawQuality?: string;
+  qualityNum?: number;
+  tier?: string;
+  container?: string;
+  extension?: string;
+  type?: 'video' | 'audio' | 'image';
+  noWatermark?: boolean;
+  size?: number | string;
+  width?: number;
+  height?: number;
+  bitrate?: number;
+  mimeType?: string;
+  label?: string;
 }
 
 export interface MediaInfo {
@@ -16,6 +31,13 @@ export interface MediaInfo {
   qualities?: MediaQuality[] | null;
   platform?: string;
   description?: string;
+  originalUrl?: string;
+  sourceEngine?: string;
+  products?: string[];
+  pagination?: {
+    hasMore?: boolean;
+    continuationToken?: string;
+  };
 }
 
 export interface ApiResponse {
@@ -31,6 +53,74 @@ export interface PosterOption {
   label: string;
   url: string;
   resolution?: string;
+}
+
+export type EngineChoice = 'auto' | 'f-engine-2' | 'f-engine-1' | 'standard';
+
+/**
+ * 40+ Supported platforms map (FAK LABS Engine & AllDL Universal)
+ */
+export const SUPPORTED_PLATFORMS: Record<string, { name: string; hosts: string[] }> = {
+  tiktok: { name: "TikTok", hosts: ["tiktok.com", "vt.tiktok.com", "vm.tiktok.com"] },
+  instagram: { name: "Instagram", hosts: ["instagram.com"] },
+  facebook: { name: "Facebook", hosts: ["facebook.com", "fb.watch", "m.facebook.com"] },
+  youtube: { name: "YouTube", hosts: ["youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"] },
+  twitter: { name: "Twitter (X)", hosts: ["twitter.com", "x.com", "mobile.twitter.com"] },
+  pinterest: { name: "Pinterest", hosts: ["pinterest.com", "pin.it"] },
+  reddit: { name: "Reddit", hosts: ["reddit.com", "v.redd.it", "old.reddit.com"] },
+  spotify: { name: "Spotify", hosts: ["spotify.com", "open.spotify.com"] },
+  amazon: { name: "Amazon", hosts: ["amazon.com", "amzn.to", "amazon.co.uk", "amazon.de"] },
+  vimeo: { name: "Vimeo", hosts: ["vimeo.com", "player.vimeo.com"] },
+  dailymotion: { name: "Dailymotion", hosts: ["dailymotion.com", "dai.ly"] },
+  bilibili: { name: "Bilibili", hosts: ["bilibili.com", "b23.tv", "m.bilibili.com"] },
+  tumblr: { name: "Tumblr", hosts: ["tumblr.com"] },
+  weibo: { name: "Weibo", hosts: ["weibo.com", "m.weibo.cn"] },
+  ted: { name: "TED", hosts: ["ted.com"] },
+  imgur: { name: "Imgur", hosts: ["imgur.com"] },
+  mega: { name: "Mega", hosts: ["mega.nz"] },
+  snapchat: { name: "Snapchat", hosts: ["snapchat.com"] },
+  threads: { name: "Threads", hosts: ["threads.com", "threads.net"] },
+  telegram: { name: "Telegram", hosts: ["t.me"] },
+  soundcloud: { name: "SoundCloud", hosts: ["soundcloud.com", "m.soundcloud.com"] },
+  twitch: { name: "Twitch", hosts: ["twitch.tv", "m.twitch.tv"] },
+  rumble: { name: "Rumble", hosts: ["rumble.com"] },
+  odysee: { name: "Odysee", hosts: ["odysee.com"] },
+  likee: { name: "Likee", hosts: ["likee.video", "l.likee.video"] },
+  bluesky: { name: "Bluesky", hosts: ["bsky.app"] },
+  streamable: { name: "Streamable", hosts: ["streamable.com"] }
+};
+
+/**
+ * Detect social platform from raw URL
+ */
+export function detectPlatform(rawUrl: string): string | null {
+  let host = "";
+  try {
+    host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+  for (const [slug, p] of Object.entries(SUPPORTED_PLATFORMS)) {
+    for (const h of p.hosts) {
+      const bare = h.replace(/^www\./, "");
+      if (host === bare || host.endsWith("." + bare)) return slug;
+    }
+  }
+  return null;
+}
+
+/**
+ * Quality tier badge from numeric quality, e.g. 1440 -> "2K", 1080 -> "Full HD"
+ */
+export function tierOf(m: { type?: string; quality_num?: number; quality?: string }): string {
+  if (m.type === "audio") return "HQ Audio";
+  const q = m.quality_num || parseInt(m.quality || "", 10) || 0;
+  if (q >= 2160) return "4K Ultra HD";
+  if (q >= 1440) return "2K Quad HD";
+  if (q >= 1080) return "Full HD";
+  if (q >= 720) return "HD";
+  if (q >= 480) return "SD";
+  return "";
 }
 
 /**
@@ -71,7 +161,6 @@ export function getPosterOptions(mediaInfo: MediaInfo, originalUrl: string): Pos
     });
   }
 
-  // Add primary thumbnail or cover image if available
   const mainThumb = mediaInfo.thumbnail || mediaInfo.coverImage;
   if (mainThumb) {
     const alreadyExists = options.some(o => o.url === mainThumb);
@@ -84,13 +173,24 @@ export function getPosterOptions(mediaInfo: MediaInfo, originalUrl: string): Pos
     }
   }
 
+  if (mediaInfo.qualities) {
+    const imageItems = mediaInfo.qualities.filter(q => q.type === 'image' && q.url);
+    imageItems.forEach((img, i) => {
+      if (!options.some(o => o.url === img.url)) {
+        options.push({
+          label: img.label || `Gallery Image ${i + 1}`,
+          url: img.url,
+          resolution: img.width && img.height ? `${img.width}x${img.height}` : 'HD'
+        });
+      }
+    });
+  }
+
   return options;
 }
 
 /**
  * Instant direct media download (Video & Audio).
- * Triggers the browser's native download manager immediately without buffering
- * whole files into memory, and without popup blocking or blank new tabs.
  */
 export function downloadMediaDirectly(sourceUrl: string, fileName?: string): void {
   if (!sourceUrl) return;
@@ -99,7 +199,6 @@ export function downloadMediaDirectly(sourceUrl: string, fileName?: string): voi
     ? fileName.replace(/[/\\?%*:|"<>]/g, '-').trim() 
     : 'SAVEit-media';
 
-  // 1. Create ephemeral anchor element
   const a = document.createElement('a');
   a.style.position = 'fixed';
   a.style.top = '-9999px';
@@ -109,24 +208,41 @@ export function downloadMediaDirectly(sourceUrl: string, fileName?: string): voi
   a.href = sourceUrl;
   a.setAttribute('download', safeName);
   
-  // NEVER use target="_blank" - target="_blank" triggers mobile browser popup blockers!
-  // Since the media server sends Content-Disposition: attachment, clicking this anchor in the same frame
-  // immediately hands off to the native browser download manager without navigating away from the page.
   document.body.appendChild(a);
   a.click();
 
-  // Safely remove after dispatch
   setTimeout(() => {
     if (document.body.contains(a)) {
       document.body.removeChild(a);
     }
-  }, 300);
+  }, 400);
+}
+
+/**
+ * Copy download link directly to clipboard
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const tmp = document.createElement('textarea');
+      tmp.value = text;
+      document.body.appendChild(tmp);
+      tmp.select();
+      document.execCommand('copy');
+      document.body.removeChild(tmp);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /**
  * Instant poster image download.
- * Since images are tiny (~50-100KB), we fetch via blob for a clean .jpg save,
- * or fallback to direct download anchor if CORS applies.
  */
 export async function downloadPosterDirectly(imageUrl: string, fileName?: string): Promise<void> {
   if (!imageUrl) return;
@@ -162,79 +278,413 @@ export async function downloadPosterDirectly(imageUrl: string, fileName?: string
   downloadMediaDirectly(imageUrl, fullName);
 }
 
-// Backward compatibility alias
 export const downloadSecurely = downloadMediaDirectly;
 
 /**
- * Robust extraction utility that tries:
- * 1. Local/Vercel edge proxy (/api/alldl)
- * 2. Direct vendor API (https://ahm7xmakki.com/api/alldl)
- * 3. Public CORS proxy fallback (if browser environment blocks direct requests)
+ * Helper to deduplicate qualities array by URL so that identical links are NEVER shown twice!
  */
-export async function extractMedia(videoUrl: string): Promise<ApiResponse> {
+export function deduplicateQualities(qualities: MediaQuality[]): MediaQuality[] {
+  const seen = new Set<string>();
+  return qualities.filter(q => {
+    if (!q.url && !q.downloadUrl) return false;
+    const targetUrl = (q.downloadUrl || q.url || '').trim().toLowerCase();
+    if (!targetUrl || seen.has(targetUrl)) return false;
+    seen.add(targetUrl);
+    return true;
+  });
+}
+
+/* =====================================================================
+   F-Engine 2 (Faizan Khichi AllDL Universal Media Engine)
+   ===================================================================== */
+function formatFEngine2Response(rawData: any, cleanUrl: string): ApiResponse {
+  const rawMedias: any[] = Array.isArray(rawData.medias) ? rawData.medias : [];
+  if (rawMedias.length === 0) {
+    throw new Error('No media formats found on F-Engine 2.');
+  }
+
+  const mappedQualities: MediaQuality[] = rawMedias.map((m: any) => {
+    const isAudio = m.type === 'audio' || (m.is_audio && !m.width);
+    const isImage = m.type === 'image';
+    const type: 'video' | 'audio' | 'image' = isAudio ? 'audio' : (isImage ? 'image' : 'video');
+    const label = m.qualityLabel || m.quality || m.label || (m.extension ? String(m.extension).toUpperCase() : (isAudio ? 'Audio MP3' : 'Video MP4'));
+    const tier = isAudio ? 'HQ Audio' : tierOf({ quality_num: m.height || m.width, quality: m.quality });
+    
+    return {
+      quality: label,
+      label: label,
+      rawQuality: m.quality,
+      qualityNum: m.height || m.width || (parseInt(m.quality, 10) || undefined),
+      tier: tier,
+      url: m.downloadUrl || m.url,
+      downloadUrl: m.downloadUrl || m.url,
+      streamUrl: m.streamUrl || m.url,
+      container: (m.extension || (isAudio ? 'mp3' : 'mp4')).toUpperCase(),
+      extension: m.extension || (isAudio ? 'mp3' : 'mp4'),
+      type: type,
+      width: m.width,
+      height: m.height,
+      bitrate: m.bitrate,
+      mimeType: m.mimeType,
+      size: m.size || (m.bitrate && rawData.duration ? `${Math.round((m.bitrate * rawData.duration) / (8 * 1024 * 1024))} MB` : undefined)
+    };
+  });
+
+  const distinctQualities = deduplicateQualities(mappedQualities);
+
+  const videos = distinctQualities.filter(q => q.type === 'video');
+  const audios = distinctQualities.filter(q => q.type === 'audio');
+
+  videos.sort((a, b) => {
+    const valA = (a.height || 0) * 10000 + (a.bitrate || 0);
+    const valB = (b.height || 0) * 10000 + (b.bitrate || 0);
+    return valB - valA;
+  });
+
+  const bestVideo = videos[0];
+  const bestAudio = audios[0];
+
+  const slug = detectPlatform(cleanUrl);
+  const platformName = slug ? SUPPORTED_PLATFORMS[slug]?.name : (extractYouTubeId(cleanUrl) ? 'YouTube' : 'Social Media');
+  const ytId = extractYouTubeId(cleanUrl);
+  const thumbnail = rawData.thumbnail || (ytId ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg` : undefined);
+
+  let durationDisplay: string | undefined = undefined;
+  if (rawData.duration) {
+    const mins = Math.floor(rawData.duration / 60);
+    const secs = String(Math.round(rawData.duration % 60)).padStart(2, '0');
+    durationDisplay = `${mins}:${secs}`;
+  }
+
+  return {
+    success: true,
+    mediaInfo: {
+      title: rawData.title || `${platformName} Media`,
+      originalUrl: rawData.url || cleanUrl,
+      platform: platformName,
+      videoUrl: bestVideo ? (bestVideo.downloadUrl || bestVideo.url) : undefined,
+      audioUrl: bestAudio ? (bestAudio.downloadUrl || bestAudio.url) : undefined,
+      thumbnail: thumbnail,
+      duration: durationDisplay || rawData.duration,
+      qualities: distinctQualities.length > 0 ? distinctQualities : null,
+      products: rawData.products || [],
+      pagination: rawData.pagination,
+      sourceEngine: 'F-Engine 2 (AllDL Universal • 40+ Platforms)'
+    }
+  };
+}
+
+export async function extractMediaFEngine2(rawUrl: string): Promise<ApiResponse> {
+  const cleanUrl = rawUrl.trim();
+
+  const endpoints = [
+    '/api/f-engine-2/media',
+    'https://alldl.faizankhichi.me/api/media'
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(ep, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ url: cleanUrl }),
+        signal: AbortSignal.timeout(12000)
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && Array.isArray(data.medias) && data.medias.length > 0) {
+          return formatFEngine2Response(data, cleanUrl);
+        }
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  throw new Error('F-Engine 2 did not return downloadable formats.');
+}
+
+/* =====================================================================
+   F-Engine 1 (Faizan Khichi Downloader API Engine)
+   ===================================================================== */
+let cachedSig: string | null = null;
+let cachedSigExp = 0;
+
+export async function getFaizanApiSig(): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  if (cachedSig && cachedSigExp - now > 30) {
+    return cachedSig;
+  }
+
+  const tokenEndpoints = [
+    '/api/faizan/token',
+    'https://downloader.faizankhichi.me/api/token'
+  ];
+
+  for (const ep of tokenEndpoints) {
+    try {
+      const res = await fetch(ep, { headers: { 'Accept': 'application/json' } });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data && data.sig) {
+          cachedSig = data.sig;
+          cachedSigExp = data.exp || (now + 300);
+          return cachedSig;
+        }
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  throw new Error('Unable to establish session token with F-Engine 1.');
+}
+
+function formatFEngine1Response(rawData: any, cleanUrl: string): ApiResponse {
+  const mediaList: any[] = Array.isArray(rawData.media) ? rawData.media : [];
+  if (mediaList.length === 0) {
+    throw new Error('F-Engine 1 returned no media links.');
+  }
+
+  const videoItems = mediaList.filter((m: any) => m.type !== 'audio' && m.url);
+  const audioItems = mediaList.filter((m: any) => m.type === 'audio' && m.url);
+
+  videoItems.sort((a: any, b: any) => {
+    const qA = a.quality_num || parseInt(a.quality, 10) || 0;
+    const qB = b.quality_num || parseInt(b.quality, 10) || 0;
+    return qB - qA;
+  });
+
+  const bestVideo = videoItems[0];
+  const bestAudio = audioItems[0];
+
+  const qualities: MediaQuality[] = videoItems.map((m: any) => {
+    const tier = tierOf(m);
+    const label = m.quality || (m.quality_num ? `${m.quality_num}p` : 'Standard Video');
+    return {
+      quality: tier && !label.toLowerCase().includes(tier.toLowerCase()) ? `${label} (${tier})` : label,
+      rawQuality: m.quality,
+      qualityNum: m.quality_num,
+      tier: tier,
+      url: m.url,
+      downloadUrl: m.url,
+      container: (m.container || 'mp4').toUpperCase(),
+      extension: m.container || 'mp4',
+      type: 'video',
+      noWatermark: !!m.no_watermark,
+      size: m.size
+    };
+  });
+
+  audioItems.forEach((a: any) => {
+    qualities.push({
+      quality: 'Audio MP3 (320kbps)',
+      rawQuality: '320kbps',
+      tier: 'HQ Audio',
+      url: a.url,
+      downloadUrl: a.url,
+      container: 'MP3',
+      extension: 'mp3',
+      type: 'audio',
+      noWatermark: true,
+      size: a.size
+    });
+  });
+
+  const distinct = deduplicateQualities(qualities);
+  const slug = detectPlatform(cleanUrl);
+  const platformName = slug ? SUPPORTED_PLATFORMS[slug]?.name : (extractYouTubeId(cleanUrl) ? 'YouTube' : 'Social Media');
+  const ytId = extractYouTubeId(cleanUrl);
+  const thumbnail = ytId ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg` : (rawData.thumbnail || undefined);
+
+  return {
+    success: true,
+    mediaInfo: {
+      title: rawData.title || `${platformName} Video`,
+      originalUrl: rawData.original_url || cleanUrl,
+      platform: platformName,
+      videoUrl: bestVideo ? bestVideo.url : undefined,
+      audioUrl: bestAudio ? bestAudio.url : undefined,
+      thumbnail: thumbnail,
+      qualities: distinct.length > 0 ? distinct : null,
+      sourceEngine: 'F-Engine 1 (FAK LABS Multi-Quality)'
+    }
+  };
+}
+
+export async function extractMediaFEngine1(rawUrl: string): Promise<ApiResponse> {
+  const cleanUrl = rawUrl.trim();
+  const encodedUrl = encodeURIComponent(cleanUrl);
+
+  try {
+    const res = await fetch(`/api/faizan/extract?url=${encodedUrl}`, {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data && data.media && data.media.length > 0) {
+        return formatFEngine1Response(data, cleanUrl);
+      }
+    }
+  } catch (err: any) {
+    console.info('F-Engine 1 server endpoint notice:', err?.message);
+  }
+
+  try {
+    const sig = await getFaizanApiSig();
+    const ep = `/api/faizan/download?url=${encodedUrl}&sig=${encodeURIComponent(sig)}`;
+    const res = await fetch(ep, { headers: { 'Accept': 'application/json' } });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data && data.media && data.media.length > 0) {
+        return formatFEngine1Response(data, cleanUrl);
+      }
+    }
+  } catch (e: any) {
+    console.info('F-Engine 1 signed endpoint notice:', e?.message);
+  }
+
+  throw new Error('F-Engine 1 currently has no download streams for this link.');
+}
+
+/* =====================================================================
+   Standard Engine (Makki / Direct Stream)
+   - Guaranteed single true video stream without duplicate quality cards!
+   ===================================================================== */
+export async function extractMediaStandard(rawUrl: string): Promise<ApiResponse> {
+  const cleanUrl = rawUrl.trim();
+  const encodedUrl = encodeURIComponent(cleanUrl);
+  const primaryApi = `/api/alldl?url=${encodedUrl}`;
+  const directApi = `https://ahm7xmakki.com/api/alldl?url=${encodedUrl}`;
+  const corsProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(directApi)}`;
+
+  const candidates = [primaryApi, directApi, corsProxy];
+
+  for (const ep of candidates) {
+    try {
+      const res = await fetch(ep, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
+
+      if (res.ok) {
+        const data: ApiResponse = await res.json();
+        if (data && (data.success || data.mediaInfo)) {
+          if (data.mediaInfo) {
+            data.mediaInfo.sourceEngine = 'Standard Engine (Direct Stream)';
+
+            if (data.mediaInfo.qualities && data.mediaInfo.qualities.length > 0) {
+              const unique = deduplicateQualities(data.mediaInfo.qualities);
+              data.mediaInfo.qualities = unique.length > 0 ? unique : null;
+            } else if (data.mediaInfo.videoUrl) {
+              data.mediaInfo.qualities = [
+                {
+                  quality: 'High Quality Stream (MP4)',
+                  rawQuality: 'HD',
+                  tier: 'HD',
+                  url: data.mediaInfo.videoUrl,
+                  downloadUrl: data.mediaInfo.videoUrl,
+                  container: 'MP4',
+                  extension: 'mp4',
+                  type: 'video',
+                  noWatermark: true,
+                  size: 'Original Bitrate'
+                }
+              ];
+            }
+          }
+          return data;
+        }
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  throw new Error('Standard engine could not resolve media from this link.');
+}
+
+/* =====================================================================
+   Universal Extraction Engine with Seamless Resilience
+   - Never fails with "not returned" when a fallback engine has the stream!
+   ===================================================================== */
+export async function extractMedia(
+  videoUrl: string,
+  engine: EngineChoice = 'auto'
+): Promise<ApiResponse> {
   const cleanUrl = videoUrl.trim();
   if (!cleanUrl) {
     throw new Error('Please enter a valid video URL.');
   }
 
-  const encodedUrl = encodeURIComponent(cleanUrl);
-  const primaryApi = `/api/alldl?url=${encodedUrl}`;
-  const directApi = `https://ahm7xmakki.com/api/alldl?url=${encodedUrl}`;
-
-  // Strategy 1: Local or Vercel proxy
-  try {
-    const res = await fetch(primaryApi, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-    });
-
-    if (res.ok) {
-      const data: ApiResponse = await res.json();
-      if (data && (data.success || data.mediaInfo)) {
-        return data;
-      }
+  // If user explicitly picked F-Engine 2
+  if (engine === 'f-engine-2') {
+    try {
+      const res = await extractMediaFEngine2(cleanUrl);
+      if (res && res.success && res.mediaInfo) return res;
+    } catch (e: any) {
+      console.info('F-Engine 2 pass, smoothly cascading to available engines:', e?.message);
     }
-  } catch {
-    // Proceed to next fallback
+    // Fall back smoothly so user always gets the media!
+    try {
+      const f1 = await extractMediaFEngine1(cleanUrl);
+      if (f1 && f1.success && f1.mediaInfo) {
+        f1.mediaInfo.sourceEngine = 'F-Engine 1 (Fallback)';
+        return f1;
+      }
+    } catch {}
+    const std = await extractMediaStandard(cleanUrl);
+    if (std && std.mediaInfo) {
+      std.mediaInfo.sourceEngine = 'Standard Engine (F2 Fallback)';
+    }
+    return std;
   }
 
-  // Strategy 2: Direct request to provider API
-  try {
-    const res = await fetch(directApi, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-    });
-
-    if (res.ok) {
-      const data: ApiResponse = await res.json();
-      if (data && (data.success || data.mediaInfo)) {
-        return data;
-      }
+  // If user explicitly picked F-Engine 1
+  if (engine === 'f-engine-1') {
+    try {
+      const res = await extractMediaFEngine1(cleanUrl);
+      if (res && res.success && res.mediaInfo) return res;
+    } catch (e: any) {
+      console.info('F-Engine 1 pass, cascading to standard:', e?.message);
     }
-  } catch {
-    // Proceed to fallback
+    const std = await extractMediaStandard(cleanUrl);
+    if (std && std.mediaInfo) {
+      std.mediaInfo.sourceEngine = 'Standard Engine (F1 Fallback)';
+    }
+    return std;
   }
 
-  // Strategy 3: Public CORS-safe proxy fallback
-  try {
-    const corsProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(directApi)}`;
-    const res = await fetch(corsProxy, {
-      method: 'GET',
-    });
-
-    if (res.ok) {
-      const data: ApiResponse = await res.json();
-      if (data && (data.success || data.mediaInfo)) {
-        return data;
-      }
-    }
-  } catch {
-    // Fallthrough to standard error
+  // If user explicitly picked Standard
+  if (engine === 'standard') {
+    return await extractMediaStandard(cleanUrl);
   }
 
-  throw new Error('Unable to extract media from this link. Please check that the URL is public and supported, or try again.');
+  // AUTO CASCADE:
+  // Step 1: Try F-Engine 2
+  try {
+    const f2Result = await extractMediaFEngine2(cleanUrl);
+    if (f2Result && f2Result.success && f2Result.mediaInfo) {
+      return f2Result;
+    }
+  } catch (err: any) {
+    console.info('Auto cascade pass F2:', err?.message);
+  }
+
+  // Step 2: Try F-Engine 1
+  try {
+    const f1Result = await extractMediaFEngine1(cleanUrl);
+    if (f1Result && f1Result.success && f1Result.mediaInfo) {
+      return f1Result;
+    }
+  } catch (err: any) {
+    console.info('Auto cascade pass F1:', err?.message);
+  }
+
+  // Step 3: Fallback to Standard Engine (Makki)
+  return await extractMediaStandard(cleanUrl);
 }

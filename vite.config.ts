@@ -24,6 +24,30 @@ export default defineConfig(({mode}) => {
           target: 'https://ahm7xmakki.com',
           changeOrigin: true,
           secure: false,
+          configure: (proxy) => {
+            proxy.on('proxyRes', (proxyRes, _req, res) => {
+              delete proxyRes.headers['access-control-allow-origin'];
+              proxyRes.headers['access-control-allow-origin'] = '*';
+              res.setHeader('Access-Control-Allow-Origin', '*');
+            });
+          },
+        },
+        '/api/faizan': {
+          target: 'https://downloader.faizankhichi.me',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/faizan/, '/api'),
+          headers: {
+            referer: 'https://downloader.faizankhichi.me/',
+            origin: 'https://downloader.faizankhichi.me',
+          },
+          secure: false,
+          configure: (proxy) => {
+            proxy.on('proxyRes', (proxyRes, _req, res) => {
+              delete proxyRes.headers['access-control-allow-origin'];
+              proxyRes.headers['access-control-allow-origin'] = '*';
+              res.setHeader('Access-Control-Allow-Origin', '*');
+            });
+          },
         },
       },
     },

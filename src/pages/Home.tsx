@@ -1,4 +1,4 @@
-import { useState, FormEvent, useMemo } from 'react';
+import { useState, FormEvent, useMemo, MouseEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -16,15 +16,26 @@ import {
   Eye,
   X,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  Copy,
+  Check,
+  Radio,
+  Sliders,
+  Flame,
+  Layers
 } from 'lucide-react';
 import { 
   extractMedia, 
   MediaInfo, 
+  MediaQuality,
   getPosterOptions, 
   downloadMediaDirectly,
   downloadPosterDirectly,
-  PosterOption 
+  copyToClipboard,
+  PosterOption,
+  EngineChoice,
+  tierOf,
+  deduplicateQualities
 } from '../services/downloaderApi';
 
 interface HomeProps {
@@ -45,25 +56,56 @@ export default function Home({ isDarkMode }: HomeProps) {
   // Poster lightbox preview state
   const [previewPoster, setPreviewPoster] = useState<PosterOption | null>(null);
 
-  // Download state for immediate visual feedback
+  // Download state for visual button feedback
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!url.trim()) return;
+  // Engine selection state: 'auto' | 'f-engine-2' | 'f-engine-1' | 'standard'
+  const [selectedEngine, setSelectedEngine] = useState<EngineChoice>('auto');
+  
+  // Link copied indicator state
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
+  // Paste button state
+  const [isPasted, setIsPasted] = useState(false);
+
+  const handlePasteClick = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setUrl(text);
+        setIsPasted(true);
+        setTimeout(() => setIsPasted(false), 1500);
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleCopyLink = async (text: string, e?: MouseEvent) => {
+    if (e) e.stopPropagation();
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopiedUrl(text);
+      setTimeout(() => setCopiedUrl(null), 1600);
+    }
+  };
+
+  const handleSubmit = async (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    const clean = url.trim();
+    if (!clean) return;
 
     setLoading(true);
     setError(null);
     setMediaInfo(null);
     setIsPlayingPreview(false);
     setPreviewPoster(null);
-    setSubmittedUrl(url.trim());
+    setSubmittedUrl(clean);
 
     try {
-      const response = await extractMedia(url.trim());
+      const response = await extractMedia(clean, selectedEngine);
       if (response && response.mediaInfo) {
         setMediaInfo(response.mediaInfo);
-        // Default to audio if no videoUrl is found
         if (!response.mediaInfo.videoUrl && response.mediaInfo.audioUrl) {
           setActiveTab('audio');
         } else {
@@ -81,20 +123,15 @@ export default function Home({ isDarkMode }: HomeProps) {
 
   /**
    * Triggers download immediately without delay, memory buffering, or popup blocking.
-   * Runs in the same synchronous user interaction tick.
    */
   const handleDownloadAction = (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
     if (!sourceUrl) return;
 
-    // 1. Give immediate visual feedback on the button
     setDownloadingFormat(formatKey);
-
-    // 2. Synchronous instant trigger to browser's native download manager
     const baseName = mediaInfo?.title || 'SAVEit-media';
     const cleanFileName = `${baseName}.${fileExtension}`;
     downloadMediaDirectly(sourceUrl, cleanFileName);
 
-    // 3. Reset visual feedback after a brief moment
     setTimeout(() => {
       setDownloadingFormat(null);
     }, 1200);
@@ -131,40 +168,154 @@ export default function Home({ isDarkMode }: HomeProps) {
     return getPosterOptions(mediaInfo, submittedUrl);
   }, [mediaInfo, submittedUrl]);
 
+  // Clean deduplicated video qualities
+  const videoQualities = useMemo(() => {
+    if (!mediaInfo || !mediaInfo.qualities) return [];
+    const videos = mediaInfo.qualities.filter(q => q.type !== 'audio');
+    return deduplicateQualities(videos);
+  }, [mediaInfo]);
+
   return (
     <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-12 md:py-20">
-      {/* Professional Hero */}
-      <div className="text-center mb-12">
+      
+      {/* Professional Hero Section */}
+      <div className="text-center mb-10">
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-[10px] font-black uppercase tracking-[2px] mb-6"
+          className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-[10px] font-black uppercase tracking-[2px] mb-6 shadow-sm"
         >
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
-          </span>
-          SAVEit Media Engine 3.0 • Multi-Platform
+          <span className="w-2 h-2 rounded-full bg-brand animate-pulse"></span>
+          <span>SAVEit Pro • Multi-Engine Downloader</span>
         </motion.div>
 
-        <h1 className="text-4xl sm:text-6xl md:text-7xl font-black mb-5 tracking-tighter leading-[0.95]">
-          Save Any Media <br /> 
-          <span className={isDarkMode ? 'text-zinc-600' : 'text-zinc-300'}>Instant Direct Extraction.</span>
+        <h1 className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight mb-4 font-sans leading-[1.05]">
+          The Ultimate <br />
+          <span className="text-brand">Media Downloader.</span>
         </h1>
-
-        <p className={`text-base sm:text-lg md:text-xl font-medium max-w-xl mx-auto ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-          Paste any YouTube, TikTok, Instagram, Twitter/X, or Facebook link for instant, high-speed MP4, MP3 & poster downloads.
+        <p className={`text-base sm:text-lg max-w-2xl mx-auto font-medium leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+          Download high-resolution videos, lossless audio, and official posters from YouTube, TikTok, Instagram, and 40+ platforms without watermarks.
         </p>
+      </div>
 
-        {/* Platform tags */}
-        <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
-          {['YouTube', 'TikTok', 'Instagram', 'Twitter/X', 'Facebook', 'Vimeo'].map((p) => (
-            <span
-              key={p}
-              className={`text-[11px] font-bold px-3 py-1 rounded-full border ${
-                isDarkMode 
-                  ? 'bg-zinc-900/80 border-zinc-800 text-zinc-400' 
-                  : 'bg-zinc-100/80 border-zinc-200 text-zinc-600'
+      {/* Engine Selection Pills */}
+      <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
+        <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mr-1">
+          Engine:
+        </span>
+        <button
+          type="button"
+          onClick={() => setSelectedEngine('auto')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            selectedEngine === 'auto'
+              ? 'bg-brand text-white shadow-md shadow-brand/20'
+              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+          }`}
+          title="Smart Cascade (F2 -> F1 -> Standard)"
+        >
+          <Zap size={13} />
+          <span>Auto (F2 → F1 → Standard)</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedEngine('f-engine-2')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            selectedEngine === 'f-engine-2'
+              ? 'bg-brand text-white shadow-md shadow-brand/20'
+              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+          }`}
+          title="Faizan AllDL Universal Engine"
+        >
+          <Sparkles size={13} className={selectedEngine === 'f-engine-2' ? 'text-yellow-200' : 'text-amber-400'} />
+          <span>F-Engine 2 (AllDL)</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedEngine('f-engine-1')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            selectedEngine === 'f-engine-1'
+              ? 'bg-brand text-white shadow-md shadow-brand/20'
+              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+          }`}
+          title="Faizan Khichi Downloader API"
+        >
+          <span>F-Engine 1</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedEngine('standard')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            selectedEngine === 'standard'
+              ? 'bg-brand text-white shadow-md shadow-brand/20'
+              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
+          }`}
+          title="Standard Direct Stream Engine"
+        >
+          <span>Standard Engine</span>
+        </button>
+      </div>
+
+      {/* Main Input Search Console */}
+      <div className="max-w-3xl mx-auto mb-16">
+        <form onSubmit={handleSubmit} className="relative group">
+          <div className={`absolute -inset-1 bg-gradient-to-r from-brand to-red-600 rounded-3xl blur opacity-25 group-hover:opacity-40 transition duration-700 ${loading ? 'opacity-0' : ''}`}></div>
+          <div className={`relative flex flex-col sm:flex-row items-center gap-2 p-2.5 rounded-2xl border shadow-xl ${
+            isDarkMode ? 'bg-zinc-900/90 border-zinc-800' : 'bg-white border-zinc-200 shadow-zinc-200/50'
+          }`}>
+            <div className="flex-1 flex items-center px-3 w-full gap-3">
+              <Youtube className="text-brand shrink-0" size={24} />
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="Paste YouTube, TikTok, Instagram, Twitter/X, or any media link..."
+                required
+                disabled={loading}
+                className="w-full bg-transparent py-3 text-base sm:text-lg font-bold placeholder:text-zinc-400 placeholder:font-normal focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handlePasteClick}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                  isPasted 
+                    ? 'bg-emerald-500 text-white' 
+                    : isDarkMode 
+                      ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300' 
+                      : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
+                }`}
+              >
+                {isPasted ? '✓ Pasted' : '▣ Paste'}
+              </button>
+            </div>
+            
+            <button
+              type="submit"
+              disabled={loading || !url.trim()}
+              className="w-full sm:w-auto bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-3.5 px-8 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-red-500/25 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="animate-spin" size={18} />
+                  <span>Resolving…</span>
+                </>
+              ) : (
+                <>
+                  <Download size={18} />
+                  <span>Download</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+
+        {/* Supported Platforms Tag Row */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-4 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+          <span>Supported:</span>
+          {['YouTube', 'TikTok', 'Instagram', 'Twitter (X)', 'Pinterest', 'Facebook', 'Spotify', '40+ More'].map((p) => (
+            <span 
+              key={p} 
+              className={`px-2 py-0.5 rounded-md border ${
+                isDarkMode ? 'border-zinc-800 bg-zinc-900/60 text-zinc-400' : 'border-zinc-200 bg-zinc-50 text-zinc-600'
               }`}
             >
               {p}
@@ -173,67 +324,7 @@ export default function Home({ isDarkMode }: HomeProps) {
         </div>
       </div>
 
-      {/* Pro Search Bar */}
-      <div className="max-w-2xl mx-auto mb-14">
-        <form onSubmit={handleSubmit} className="relative group">
-          <div className={`absolute -inset-1 bg-gradient-to-r from-brand to-red-600 rounded-2xl blur opacity-25 group-hover:opacity-45 transition duration-700 ${loading ? 'opacity-50 animate-pulse' : ''}`}></div>
-          <div className={`relative flex flex-col md:flex-row gap-2 p-2.5 rounded-2xl ${isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'} border shadow-xl`}>
-            <div className="flex-1 flex items-center px-4 gap-3">
-              <Youtube className="text-brand shrink-0" size={24} />
-              <input 
-                id="video-url-input"
-                type="text" 
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="Paste video link here (YouTube, TikTok, IG...)"
-                disabled={loading}
-                className="w-full bg-transparent py-3.5 text-base sm:text-lg font-bold placeholder:text-zinc-500 focus:outline-none"
-              />
-              {url && !loading && (
-                <button
-                  type="button"
-                  onClick={() => setUrl('')}
-                  className="text-xs font-bold text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 px-2 py-1"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            <button 
-              id="extract-btn"
-              type="submit"
-              disabled={loading || !url.trim()}
-              className="bg-brand hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black uppercase tracking-widest py-3.5 sm:py-4 px-8 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-red-500/25 cursor-pointer"
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="animate-spin" size={18} />
-                  <span>Processing...</span>
-                </>
-              ) : (
-                <>
-                  <span>Extract</span>
-                  <ArrowRight size={18} />
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-
-        {/* Quick helper tip */}
-        <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 mt-3 px-2">
-          <span>Supported: High-Res MP4, MP3 Audio, HD Posters & Qualities</span>
-          <button
-            type="button"
-            onClick={() => setUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ')}
-            className="text-brand hover:underline font-bold transition-all"
-          >
-            Try sample URL
-          </button>
-        </div>
-      </div>
-
-      {/* Loading state indicator */}
+      {/* Loading state skeleton */}
       {loading && (
         <motion.div
           initial={{ opacity: 0, y: 15 }}
@@ -264,15 +355,15 @@ export default function Home({ isDarkMode }: HomeProps) {
             <div className="mt-3 flex gap-3">
               <button
                 type="button"
-                onClick={handleSubmit}
-                className="text-xs font-black underline hover:no-underline text-red-600 dark:text-red-400"
+                onClick={() => handleSubmit()}
+                className="text-xs font-black underline hover:no-underline text-red-600 dark:text-red-400 cursor-pointer"
               >
                 Retry Extraction
               </button>
               <button
                 type="button"
                 onClick={resetForm}
-                className="text-xs font-semibold text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                className="text-xs font-semibold text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 cursor-pointer"
               >
                 Try Another Link
               </button>
@@ -283,21 +374,21 @@ export default function Home({ isDarkMode }: HomeProps) {
 
       {/* Output Console / Download Card */}
       <AnimatePresence mode="wait">
-        {mediaInfo && !loading ? (
+        {mediaInfo && !loading && (
           <motion.div
             key="media-result"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className={`rounded-[32px] overflow-hidden border shadow-3xl ${
+            className={`rounded-[32px] overflow-hidden border shadow-3xl mb-16 ${
               isDarkMode ? 'border-zinc-800 bg-[#0d0d0d]' : 'border-zinc-200 bg-white shadow-xl'
             }`}
           >
             {/* Header bar of result */}
-            <div className={`px-6 sm:px-8 py-4 flex items-center justify-between border-b ${
+            <div className={`px-6 sm:px-8 py-4 flex flex-wrap items-center justify-between gap-3 border-b ${
               isDarkMode ? 'border-zinc-800/80 bg-zinc-900/40' : 'border-zinc-100 bg-zinc-50/80'
             }`}>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
                 <span className="text-[10px] font-black uppercase tracking-[2px] text-emerald-500">
                   Ready to Download
@@ -305,6 +396,12 @@ export default function Home({ isDarkMode }: HomeProps) {
                 {mediaInfo.platform && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand/10 text-brand uppercase">
                     {mediaInfo.platform}
+                  </span>
+                )}
+                {mediaInfo.sourceEngine && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    <Sparkles size={10} />
+                    {mediaInfo.sourceEngine}
                   </span>
                 )}
               </div>
@@ -323,7 +420,7 @@ export default function Home({ isDarkMode }: HomeProps) {
             <div className="p-6 sm:p-8 md:p-10">
               <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
                 
-                {/* Visual Preview / Video Player Container */}
+                {/* Visual Preview / Video Player Container (Col 5) */}
                 <div className="md:col-span-5 flex flex-col gap-3">
                   <div className="relative group overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-md bg-black">
                     {isPlayingPreview && mediaInfo.videoUrl ? (
@@ -358,7 +455,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                           </div>
                         )}
 
-                        {/* Interactive Play Overlay Button for Video Preview */}
+                        {/* Interactive Play Overlay Button */}
                         {mediaInfo.videoUrl && (
                           <button
                             type="button"
@@ -379,7 +476,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                     )}
                   </div>
 
-                  {/* Toggle Preview / Full Poster Action underneath player */}
+                  {/* Toggle Preview & Poster Actions */}
                   <div className="flex gap-2">
                     {mediaInfo.videoUrl && (
                       <button
@@ -425,7 +522,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                   </div>
                 </div>
 
-                {/* Info & Options */}
+                {/* Info & Options (Col 7) */}
                 <div className="md:col-span-7 flex flex-col justify-between">
                   <div>
                     <h2 className="text-xl sm:text-2xl font-black mb-2 tracking-tight line-clamp-2 leading-snug">
@@ -443,7 +540,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                     <button
                       type="button"
                       onClick={() => setActiveTab('video')}
-                      disabled={!mediaInfo.videoUrl && (!mediaInfo.qualities || mediaInfo.qualities.length === 0)}
+                      disabled={!mediaInfo.videoUrl && videoQualities.length === 0}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer ${
                         activeTab === 'video'
                           ? 'bg-brand text-white shadow-md shadow-brand/20'
@@ -483,77 +580,133 @@ export default function Home({ isDarkMode }: HomeProps) {
                     </button>
                   </div>
 
-                  {/* Action Section */}
+                  {/* Action Section based on Active Tab */}
                   {activeTab === 'video' && (
                     <div className="space-y-4">
-                      {/* Primary Video Download Button */}
+                      {/* Primary Video Download Button & Copy Link */}
                       {mediaInfo.videoUrl ? (
-                        <button
-                          id="main-download-video-btn"
-                          type="button"
-                          onClick={() => handleDownloadAction(mediaInfo.videoUrl, 'video-primary', 'mp4')}
-                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
-                        >
-                          {downloadingFormat === 'video-primary' ? (
-                            <>
-                              <CheckCircle2 size={20} className="text-white animate-bounce" />
-                              <span>Starting Download...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Download size={20} />
-                              <span>Download Video (High Quality MP4)</span>
-                            </>
-                          )}
-                        </button>
-                      ) : (
-                        <p className="text-sm text-amber-500 font-semibold">Video stream available below via quality options.</p>
-                      )}
+                        <div className="flex gap-2">
+                          <button
+                            id="main-download-video-btn"
+                            type="button"
+                            onClick={() => handleDownloadAction(mediaInfo.videoUrl, 'video-primary', 'mp4')}
+                            className="flex-1 bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
+                          >
+                            {downloadingFormat === 'video-primary' ? (
+                              <>
+                                <CheckCircle2 size={20} className="text-white animate-bounce" />
+                                <span>Starting Download...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download size={20} />
+                                <span>Download Video (High Quality MP4)</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleCopyLink(mediaInfo.videoUrl!, e)}
+                            className={`px-4 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
+                              copiedUrl === mediaInfo.videoUrl
+                                ? 'bg-emerald-500 text-white border-emerald-600'
+                                : isDarkMode
+                                  ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300'
+                                  : 'bg-zinc-100 hover:bg-zinc-200 border-zinc-200 text-zinc-700'
+                            }`}
+                            title="Copy Direct Video Link"
+                          >
+                            {copiedUrl === mediaInfo.videoUrl ? (
+                              <>
+                                <Check size={16} />
+                                <span className="hidden sm:inline">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={16} />
+                                <span className="hidden sm:inline">Copy</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : null}
 
-                      {/* Video Qualities Section if multiple options are available */}
-                      {mediaInfo.qualities && mediaInfo.qualities.length > 0 && (
+                      {/* Video Qualities Section - STRICTLY DEDUPLICATED */}
+                      {videoQualities.length > 0 && (
                         <div className="pt-2">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-[11px] font-black uppercase tracking-wider text-zinc-400">
-                              Available Resolutions & Qualities:
+                              Available Resolutions &amp; Qualities:
                             </span>
                             <span className="text-[10px] font-bold text-brand bg-brand/10 px-2 py-0.5 rounded">
-                              {mediaInfo.qualities.length} Options
+                              {videoQualities.length} {videoQualities.length === 1 ? 'Option' : 'Options'}
                             </span>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                            {mediaInfo.qualities.map((q, idx) => {
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {videoQualities.map((q, idx) => {
                               const qualityKey = `quality-${idx}-${q.quality}`;
                               const isThisDownloading = downloadingFormat === qualityKey;
+                              const isCopied = copiedUrl === (q.downloadUrl || q.url);
 
                               return (
-                                <button
+                                <div
                                   key={idx}
-                                  type="button"
-                                  onClick={() => handleDownloadAction(q.url, qualityKey, 'mp4')}
-                                  className={`py-2.5 px-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center justify-between group cursor-pointer ${
+                                  className={`p-3 rounded-2xl border text-left text-xs font-bold transition-all flex items-center justify-between group ${
                                     isDarkMode 
-                                      ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-200' 
-                                      : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200 text-zinc-800'
+                                      ? 'bg-zinc-900/90 hover:bg-zinc-800 border-zinc-800 text-zinc-200' 
+                                      : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200 text-zinc-800 shadow-sm'
                                   }`}
                                 >
-                                  <div>
-                                    <div className="font-black text-sm flex items-center gap-1">
+                                  <div className="min-w-0 pr-2">
+                                    <div className="font-black text-sm flex items-center gap-1.5 flex-wrap">
                                       <span>{q.quality || 'Standard'}</span>
-                                      <Sparkles size={11} className="text-brand opacity-60" />
+                                      {q.tier && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand/10 text-brand font-black tracking-wider uppercase">
+                                          {q.tier}
+                                        </span>
+                                      )}
+                                      {q.noWatermark && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-black">
+                                          Clean
+                                        </span>
+                                      )}
                                     </div>
-                                    <span className="text-[10px] text-zinc-500 font-medium">MP4 Video</span>
+                                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-medium mt-0.5">
+                                      <span>{q.container || 'MP4'} Video</span>
+                                      {q.size && <span>• {typeof q.size === 'number' ? `${(q.size / (1024 * 1024)).toFixed(1)} MB` : q.size}</span>}
+                                    </div>
                                   </div>
 
-                                  <div className="w-7 h-7 rounded-lg bg-brand/10 text-brand flex items-center justify-center group-hover:bg-brand group-hover:text-white transition-colors">
-                                    {isThisDownloading ? (
-                                      <CheckCircle2 size={14} className="text-emerald-500" />
-                                    ) : (
-                                      <Download size={13} />
-                                    )}
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleCopyLink(q.downloadUrl || q.url, e)}
+                                      className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                                        isCopied 
+                                          ? 'bg-emerald-500 text-white border-emerald-600' 
+                                          : isDarkMode 
+                                            ? 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300' 
+                                            : 'bg-white hover:bg-zinc-100 border-zinc-200 text-zinc-600'
+                                      }`}
+                                      title={isCopied ? 'Link Copied!' : 'Copy Direct Link'}
+                                    >
+                                      {isCopied ? <Check size={14} /> : <Copy size={14} />}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadAction(q.downloadUrl || q.url, qualityKey, (q.container || 'mp4').toLowerCase())}
+                                      className="p-2 rounded-xl bg-brand hover:bg-red-600 text-white flex items-center justify-center transition-all cursor-pointer shadow-md shadow-brand/20 active:scale-95"
+                                      title="Download Format"
+                                    >
+                                      {isThisDownloading ? (
+                                        <CheckCircle2 size={14} className="text-white animate-bounce" />
+                                      ) : (
+                                        <Download size={14} />
+                                      )}
+                                    </button>
                                   </div>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -565,24 +718,50 @@ export default function Home({ isDarkMode }: HomeProps) {
                   {activeTab === 'audio' && (
                     <div className="space-y-4">
                       {mediaInfo.audioUrl || mediaInfo.musicUrl ? (
-                        <button
-                          id="main-download-audio-btn"
-                          type="button"
-                          onClick={() => handleDownloadAction(mediaInfo.audioUrl || mediaInfo.musicUrl, 'audio-primary', 'mp3')}
-                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
-                        >
-                          {downloadingFormat === 'audio-primary' ? (
-                            <>
-                              <CheckCircle2 size={20} className="text-white animate-bounce" />
-                              <span>Starting Download...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Music size={20} />
-                              <span>Download Audio (MP3 320kbps)</span>
-                            </>
-                          )}
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            id="main-download-audio-btn"
+                            type="button"
+                            onClick={() => handleDownloadAction(mediaInfo.audioUrl || mediaInfo.musicUrl, 'audio-primary', 'mp3')}
+                            className="flex-1 bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
+                          >
+                            {downloadingFormat === 'audio-primary' ? (
+                              <>
+                                <CheckCircle2 size={20} className="text-white animate-bounce" />
+                                <span>Starting Download...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Music size={20} />
+                                <span>Download Audio (MP3 320kbps)</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleCopyLink((mediaInfo.audioUrl || mediaInfo.musicUrl)!, e)}
+                            className={`px-4 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
+                              copiedUrl === (mediaInfo.audioUrl || mediaInfo.musicUrl)
+                                ? 'bg-emerald-500 text-white border-emerald-600'
+                                : isDarkMode
+                                  ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300'
+                                  : 'bg-zinc-100 hover:bg-zinc-200 border-zinc-200 text-zinc-700'
+                            }`}
+                            title="Copy Direct Audio Link"
+                          >
+                            {copiedUrl === (mediaInfo.audioUrl || mediaInfo.musicUrl) ? (
+                              <>
+                                <Check size={16} />
+                                <span className="hidden sm:inline">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={16} />
+                                <span className="hidden sm:inline">Copy</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       ) : (
                         <p className="text-sm text-zinc-400">Audio-only stream is not available for this specific link.</p>
                       )}
@@ -596,53 +775,61 @@ export default function Home({ isDarkMode }: HomeProps) {
                       </span>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {posterOptions.map((poster, idx) => {
-                          const posterKey = `poster-${idx}`;
-                          const isThisDownloading = downloadingFormat === posterKey;
+                          const formatKey = `poster-${idx}`;
+                          const isDownloading = downloadingFormat === formatKey;
+                          const isCopied = copiedUrl === poster.url;
 
                           return (
-                            <div 
+                            <div
                               key={idx}
-                              className={`p-3.5 rounded-2xl border flex flex-col justify-between gap-3 ${
-                                isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+                              className={`p-3 rounded-2xl border text-left text-xs font-bold transition-all flex items-center justify-between group ${
+                                isDarkMode 
+                                  ? 'bg-zinc-900/90 hover:bg-zinc-800 border-zinc-800 text-zinc-200' 
+                                  : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200 text-zinc-800 shadow-sm'
                               }`}
                             >
-                              <div className="flex items-center gap-3">
-                                <img 
-                                  src={poster.url} 
-                                  alt={poster.label}
-                                  className="w-14 h-10 object-cover rounded-lg border border-zinc-700/50 shrink-0" 
-                                />
-                                <div>
-                                  <h4 className="text-xs font-black tracking-tight">{poster.label}</h4>
-                                  <span className="text-[10px] text-zinc-500 font-mono">{poster.resolution}</span>
-                                </div>
+                              <div className="min-w-0 pr-2">
+                                <div className="font-black text-sm">{poster.label}</div>
+                                <div className="text-[10px] text-zinc-500 font-medium">{poster.resolution} • JPG</div>
                               </div>
-
-                              <div className="flex gap-2">
+                              <div className="flex items-center gap-1.5 shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => setPreviewPoster(poster)}
-                                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                  className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                                     isDarkMode 
-                                      ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700' 
-                                      : 'bg-white hover:bg-zinc-100 text-zinc-800 border-zinc-200'
+                                      ? 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300' 
+                                      : 'bg-white hover:bg-zinc-100 border-zinc-200 text-zinc-600'
                                   }`}
+                                  title="View Full Poster"
                                 >
-                                  <Eye size={13} />
-                                  <span>Preview</span>
+                                  <Eye size={14} />
                                 </button>
-
                                 <button
                                   type="button"
-                                  onClick={() => handlePosterDownload(poster.url, posterKey)}
-                                  className="flex-1 py-2 px-2.5 rounded-lg text-xs font-bold bg-brand hover:bg-red-600 text-white flex items-center justify-center gap-1.5 shadow-sm shadow-red-500/20 transition-all cursor-pointer"
+                                  onClick={(e) => handleCopyLink(poster.url, e)}
+                                  className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                                    isCopied 
+                                      ? 'bg-emerald-500 text-white border-emerald-600' 
+                                      : isDarkMode 
+                                        ? 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300' 
+                                        : 'bg-white hover:bg-zinc-100 border-zinc-200 text-zinc-600'
+                                  }`}
+                                  title={isCopied ? 'Link Copied!' : 'Copy Direct Link'}
                                 >
-                                  {isThisDownloading ? (
-                                    <CheckCircle2 size={13} className="text-white" />
+                                  {isCopied ? <Check size={14} /> : <Copy size={14} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePosterDownload(poster.url, formatKey)}
+                                  className="p-2 rounded-xl bg-brand hover:bg-red-600 text-white flex items-center justify-center transition-all cursor-pointer shadow-md shadow-brand/20 active:scale-95"
+                                  title="Download Poster"
+                                >
+                                  {isDownloading ? (
+                                    <CheckCircle2 size={14} className="text-white animate-bounce" />
                                   ) : (
-                                    <Download size={13} />
+                                    <Download size={14} />
                                   )}
-                                  <span>Download</span>
                                 </button>
                               </div>
                             </div>
@@ -652,130 +839,106 @@ export default function Home({ isDarkMode }: HomeProps) {
                     </div>
                   )}
 
-                  {/* Footer status notice */}
-                  <div className="flex items-center justify-between mt-6 pt-4 border-t border-zinc-100 dark:border-zinc-800/80 text-[11px] font-medium text-zinc-500">
-                    <span className="flex items-center gap-1.5">
-                      <CheckCircle2 size={13} className="text-emerald-500" />
-                      <span>Encrypted direct extraction stream</span>
-                    </span>
-                    <span className="font-mono text-[10px] uppercase">
-                      LinkShare Protected
-                    </span>
-                  </div>
-
                 </div>
               </div>
             </div>
           </motion.div>
-        ) : (
-          /* Features Grid when idle */
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6"
-          >
-            {[
-              { 
-                icon: Zap, 
-                title: "Live Video Preview", 
-                text: "Watch and verify videos before downloading right inside our responsive player." 
-              },
-              { 
-                icon: ShieldCheck, 
-                title: "HD Poster Extraction", 
-                text: "Download official 1080p YouTube posters and social media cover art in full resolution." 
-              },
-              { 
-                icon: Share2, 
-                title: "Multiple Qualities", 
-                text: "Select your preferred resolution from 1080p, 720p, 480p, down to crystal-clear 320kbps MP3s." 
-              }
-            ].map((f, i) => (
-              <div 
-                key={i} 
-                className={`p-8 rounded-3xl border transition-all ${
-                  isDarkMode 
-                    ? 'bg-zinc-900/30 border-zinc-800 hover:border-zinc-700' 
-                    : 'bg-white border-zinc-100 shadow-sm hover:shadow-md'
-                }`}
-              >
-                <div className="w-12 h-12 bg-brand/10 rounded-2xl flex items-center justify-center mb-6">
-                  <f.icon className="text-brand" size={24} />
-                </div>
-                <h3 className="text-xl font-black mb-3 tracking-tight">{f.title}</h3>
-                <p className={`text-sm leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500 font-medium'}`}>
-                  {f.text}
-                </p>
-              </div>
-            ))}
-          </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Poster Preview Modal Lightbox */}
+      {/* Poster Image Lightbox Modal */}
       <AnimatePresence>
         {previewPoster && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6"
-            onClick={() => setPreviewPoster(null)}
-          >
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className={`max-w-2xl w-full rounded-3xl overflow-hidden border shadow-2xl ${
-                isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
-              }`}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative max-w-3xl w-full bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl p-6"
             >
-              <div className={`p-4 flex items-center justify-between border-b ${
-                isDarkMode ? 'border-zinc-800' : 'border-zinc-200'
-              }`}>
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-800">
                 <div>
-                  <h3 className="text-sm font-black">{previewPoster.label}</h3>
-                  <span className="text-[10px] text-zinc-500 font-mono">{previewPoster.resolution}</span>
+                  <h3 className="text-base font-black text-white">{previewPoster.label}</h3>
+                  <span className="text-xs text-zinc-400">{previewPoster.resolution}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setPreviewPoster(null)}
-                  className="p-1.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                  className="p-2 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="p-4 bg-black flex items-center justify-center">
-                <img 
-                  src={previewPoster.url} 
-                  alt={previewPoster.label} 
-                  className="max-h-[60vh] w-auto object-contain rounded-lg"
+              <div className="max-h-[60vh] overflow-hidden rounded-xl bg-black flex items-center justify-center">
+                <img
+                  src={previewPoster.url}
+                  alt={previewPoster.label}
+                  className="max-h-[60vh] w-auto object-contain"
                 />
               </div>
 
-              <div className="p-4 flex justify-end gap-3">
+              <div className="mt-6 flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setPreviewPoster(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                  className="px-4 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold hover:bg-zinc-800 transition-colors cursor-pointer"
                 >
                   Close
                 </button>
                 <button
                   type="button"
                   onClick={() => handlePosterDownload(previewPoster.url, 'modal-poster')}
-                  className="bg-brand hover:bg-red-600 text-white px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-red-500/20 cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-brand hover:bg-red-600 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-red-500/25"
                 >
                   <Download size={14} />
-                  <span>Download Image</span>
+                  <span>Download Artwork</span>
                 </button>
               </div>
             </motion.div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
+
+      {/* Feature Value Props Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className={`p-6 rounded-2xl border transition-all ${
+          isDarkMode ? 'bg-zinc-900/40 border-zinc-800' : 'bg-white border-zinc-200 shadow-sm'
+        }`}>
+          <div className="w-10 h-10 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <Radio size={20} />
+          </div>
+          <h4 className="font-bold text-sm mb-1.5">Dual F-Engines + Standard</h4>
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Smart cascade across F-Engine 2 (AllDL), F-Engine 1 (FAK LABS), and Standard Engine with automatic fallback.
+          </p>
+        </div>
+
+        <div className={`p-6 rounded-2xl border transition-all ${
+          isDarkMode ? 'bg-zinc-900/40 border-zinc-800' : 'bg-white border-zinc-200 shadow-sm'
+        }`}>
+          <div className="w-10 h-10 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <Layers size={20} />
+          </div>
+          <h4 className="font-bold text-sm mb-1.5">Strict Link Deduplication</h4>
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Eliminates duplicate quality links. Only real, unique resolutions and audio bitrates are presented.
+          </p>
+        </div>
+
+        <div className={`p-6 rounded-2xl border transition-all ${
+          isDarkMode ? 'bg-zinc-900/40 border-zinc-800' : 'bg-white border-zinc-200 shadow-sm'
+        }`}>
+          <div className="w-10 h-10 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <Zap size={20} />
+          </div>
+          <h4 className="font-bold text-sm mb-1.5">Instant Stream Downloads</h4>
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Direct native downloads with zero memory lag, fast stream resolution, and HD poster artworks.
+          </p>
+        </div>
+      </div>
+
     </main>
   );
 }
