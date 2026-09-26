@@ -29,6 +29,49 @@ app.use((_req, res, next) => {
 let cachedFaizanSig: string | null = null;
 let cachedFaizanExp = 0;
 
+export function cleanMediaUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  let url = rawUrl.trim();
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    
+    // YouTube short links: youtu.be/<id>?si=...
+    if (host === "youtu.be") {
+      const videoId = parsed.pathname.replace(/^\/+/, "").split("/")[0];
+      if (videoId) {
+        return `https://youtu.be/${videoId}`;
+      }
+    }
+    
+    // YouTube standard links: youtube.com/watch?v=<id>&si=...
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      if (parsed.pathname === "/watch") {
+        const v = parsed.searchParams.get("v");
+        if (v) return `https://www.youtube.com/watch?v=${v}`;
+      }
+      if (parsed.pathname.startsWith("/shorts/")) {
+        const id = parsed.pathname.replace(/^\/shorts\/+/, "").split("/")[0];
+        if (id) return `https://www.youtube.com/shorts/${id}`;
+      }
+      if (parsed.pathname.startsWith("/embed/")) {
+        const id = parsed.pathname.replace(/^\/embed\/+/, "").split("/")[0];
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+    }
+
+    // Strip general social/share tracking query parameters (si, igsh, utm_*, fbclid, feature, pp, etc.)
+    const trackingParams = [
+      "si", "igsh", "utm_source", "utm_medium", "utm_campaign", 
+      "utm_term", "utm_content", "fbclid", "feature", "pp"
+    ];
+    trackingParams.forEach(p => parsed.searchParams.delete(p));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 const FAIZAN_HEADERS = {
   'Accept': 'application/json',
   'Referer': 'https://downloader.faizankhichi.me/',
@@ -72,12 +115,14 @@ app.get('/api/faizan/token', async (_req: Request, res: Response) => {
 
 // Download proxy route
 app.get('/api/faizan/download', async (req: Request, res: Response) => {
-  const targetUrl = req.query.url as string;
+  const rawTargetUrl = req.query.url as string;
   let sig = req.query.sig as string;
 
-  if (!targetUrl) {
+  if (!rawTargetUrl) {
     return res.status(400).json({ error: 'Missing "url" parameter' });
   }
+
+  const targetUrl = cleanMediaUrl(rawTargetUrl);
 
   try {
     if (!sig) {
@@ -105,10 +150,12 @@ app.get('/api/faizan/download', async (req: Request, res: Response) => {
 
 // All-in-one Faizan extract endpoint (simplifies client code)
 app.get('/api/faizan/extract', async (req: Request, res: Response) => {
-  const targetUrl = req.query.url as string;
-  if (!targetUrl) {
+  const rawTargetUrl = req.query.url as string;
+  if (!rawTargetUrl) {
     return res.status(400).json({ error: 'Missing "url" parameter' });
   }
+
+  const targetUrl = cleanMediaUrl(rawTargetUrl);
 
   try {
     const token = await fetchFaizanToken();
@@ -129,105 +176,15 @@ app.get('/api/faizan/extract', async (req: Request, res: Response) => {
 });
 
 /* =====================================================================
-   F-Engine 2 (Faizan Khichi AllDL Universal Engine) Integration
-   ===================================================================== */
-const ALLDL_HEADERS = {
-  'Accept': 'application/json',
-  'Content-Type': 'application/json',
-  'Referer': 'https://alldl.faizankhichi.me/',
-  'Origin': 'https://alldl.faizankhichi.me',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-};
-
-// Security config for Turnstile
-app.get('/api/f-engine-2/security-config', async (_req: Request, res: Response) => {
-  try {
-    const upstreamRes = await fetch('https://alldl.faizankhichi.me/api/security/config', {
-      headers: ALLDL_HEADERS,
-      signal: AbortSignal.timeout(10000)
-    });
-    if (!upstreamRes.ok) {
-      return res.status(upstreamRes.status).json({ error: 'Failed to fetch AllDL security config' });
-    }
-    const data = await upstreamRes.json();
-    return res.json(data);
-  } catch (err: any) {
-    return res.status(502).json({ error: err?.message || 'F-Engine 2 security config error' });
-  }
-});
-
-// F-Engine 2 media extraction endpoint
-app.post('/api/f-engine-2/media', async (req: Request, res: Response) => {
-  const { url, turnstileToken, continuationToken } = req.body || {};
-  if (!url) {
-    return res.status(400).json({ error: 'Missing "url" in request body' });
-  }
-
-  try {
-    const payload: Record<string, any> = { url };
-    if (turnstileToken) payload.turnstileToken = turnstileToken;
-    if (continuationToken) payload.continuationToken = continuationToken;
-
-    const upstreamRes = await fetch('https://alldl.faizankhichi.me/api/media', {
-      method: 'POST',
-      headers: ALLDL_HEADERS,
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(35000)
-    });
-
-    const data = await upstreamRes.json().catch(() => ({}));
-    return res.status(upstreamRes.status).json(data);
-  } catch (err: any) {
-    return res.status(502).json({ error: err?.message || 'F-Engine 2 request failed' });
-  }
-});
-
-// F-Engine 2 stream/download proxy helper
-app.get('/api/f-engine-2/stream', async (req: Request, res: Response) => {
-  const targetUrl = req.query.url as string;
-  if (!targetUrl) {
-    return res.status(400).json({ error: 'Missing "url" parameter' });
-  }
-
-  try {
-    const upstreamRes = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': ALLDL_HEADERS['User-Agent'],
-        'Referer': 'https://alldl.faizankhichi.me/'
-      }
-    });
-
-    const contentType = upstreamRes.headers.get('content-type') || 'application/octet-stream';
-    res.setHeader('Content-Type', contentType);
-    if (upstreamRes.headers.get('content-length')) {
-      res.setHeader('Content-Length', upstreamRes.headers.get('content-length')!);
-    }
-
-    if (!upstreamRes.body) {
-      return res.status(500).send('No response stream');
-    }
-
-    // Pipe response
-    const reader = upstreamRes.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(value);
-    }
-    return res.end();
-  } catch (err: any) {
-    return res.status(502).send(err?.message || 'Proxy error');
-  }
-});
-
-/* =====================================================================
    Standard Engine (Makki / AllDL) Proxy
    ===================================================================== */
 app.get('/api/alldl', async (req: Request, res: Response) => {
-  const targetUrl = req.query.url as string;
-  if (!targetUrl) {
+  const rawTargetUrl = req.query.url as string;
+  if (!rawTargetUrl) {
     return res.status(400).json({ error: 'Missing "url" parameter' });
   }
+
+  const targetUrl = cleanMediaUrl(rawTargetUrl);
 
   try {
     const upstreamUrl = `https://ahm7xmakki.com/api/alldl?url=${encodeURIComponent(targetUrl)}`;

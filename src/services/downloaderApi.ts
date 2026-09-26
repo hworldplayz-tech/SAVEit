@@ -55,10 +55,57 @@ export interface PosterOption {
   resolution?: string;
 }
 
-export type EngineChoice = 'auto' | 'f-engine-2' | 'f-engine-1' | 'standard';
+export type EngineChoice = 'auto' | 'f-engine-1' | 'standard';
 
 /**
- * 40+ Supported platforms map (FAK LABS Engine & AllDL Universal)
+ * Clean & normalize media URLs:
+ * Strips YouTube share tokens (?si=...), tracking queries, and parameters that can cause 400s.
+ */
+export function cleanMediaUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  let url = rawUrl.trim();
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    
+    // YouTube short links: youtu.be/<id>?si=... -> https://youtu.be/<id>
+    if (host === "youtu.be") {
+      const videoId = parsed.pathname.replace(/^\/+/, "").split("/")[0];
+      if (videoId) {
+        return `https://youtu.be/${videoId}`;
+      }
+    }
+    
+    // YouTube standard links: youtube.com/watch?v=<id>&si=... -> https://www.youtube.com/watch?v=<id>
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      if (parsed.pathname === "/watch") {
+        const v = parsed.searchParams.get("v");
+        if (v) return `https://www.youtube.com/watch?v=${v}`;
+      }
+      if (parsed.pathname.startsWith("/shorts/")) {
+        const id = parsed.pathname.replace(/^\/shorts\/+/, "").split("/")[0];
+        if (id) return `https://www.youtube.com/shorts/${id}`;
+      }
+      if (parsed.pathname.startsWith("/embed/")) {
+        const id = parsed.pathname.replace(/^\/embed\/+/, "").split("/")[0];
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+    }
+
+    // Strip general social/share tracking query parameters (si, igsh, utm_*, fbclid, feature, pp, etc.)
+    const trackingParams = [
+      "si", "igsh", "utm_source", "utm_medium", "utm_campaign", 
+      "utm_term", "utm_content", "fbclid", "feature", "pp"
+    ];
+    trackingParams.forEach(p => parsed.searchParams.delete(p));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * 40+ Supported platforms map (FAK LABS Engine)
  */
 export const SUPPORTED_PLATFORMS: Record<string, { name: string; hosts: string[] }> = {
   tiktok: { name: "TikTok", hosts: ["tiktok.com", "vt.tiktok.com", "vm.tiktok.com"] },
@@ -219,29 +266,6 @@ export function downloadMediaDirectly(sourceUrl: string, fileName?: string): voi
 }
 
 /**
- * Copy download link directly to clipboard
- */
-export async function copyToClipboard(text: string): Promise<boolean> {
-  if (!text) return false;
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const tmp = document.createElement('textarea');
-      tmp.value = text;
-      document.body.appendChild(tmp);
-      tmp.select();
-      document.execCommand('copy');
-      document.body.removeChild(tmp);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-/**
  * Instant poster image download.
  */
 export async function downloadPosterDirectly(imageUrl: string, fileName?: string): Promise<void> {
@@ -295,120 +319,6 @@ export function deduplicateQualities(qualities: MediaQuality[]): MediaQuality[] 
 }
 
 /* =====================================================================
-   F-Engine 2 (Faizan Khichi AllDL Universal Media Engine)
-   ===================================================================== */
-function formatFEngine2Response(rawData: any, cleanUrl: string): ApiResponse {
-  const rawMedias: any[] = Array.isArray(rawData.medias) ? rawData.medias : [];
-  if (rawMedias.length === 0) {
-    throw new Error('No media formats found on F-Engine 2.');
-  }
-
-  const mappedQualities: MediaQuality[] = rawMedias.map((m: any) => {
-    const isAudio = m.type === 'audio' || (m.is_audio && !m.width);
-    const isImage = m.type === 'image';
-    const type: 'video' | 'audio' | 'image' = isAudio ? 'audio' : (isImage ? 'image' : 'video');
-    const label = m.qualityLabel || m.quality || m.label || (m.extension ? String(m.extension).toUpperCase() : (isAudio ? 'Audio MP3' : 'Video MP4'));
-    const tier = isAudio ? 'HQ Audio' : tierOf({ quality_num: m.height || m.width, quality: m.quality });
-    
-    return {
-      quality: label,
-      label: label,
-      rawQuality: m.quality,
-      qualityNum: m.height || m.width || (parseInt(m.quality, 10) || undefined),
-      tier: tier,
-      url: m.downloadUrl || m.url,
-      downloadUrl: m.downloadUrl || m.url,
-      streamUrl: m.streamUrl || m.url,
-      container: (m.extension || (isAudio ? 'mp3' : 'mp4')).toUpperCase(),
-      extension: m.extension || (isAudio ? 'mp3' : 'mp4'),
-      type: type,
-      width: m.width,
-      height: m.height,
-      bitrate: m.bitrate,
-      mimeType: m.mimeType,
-      size: m.size || (m.bitrate && rawData.duration ? `${Math.round((m.bitrate * rawData.duration) / (8 * 1024 * 1024))} MB` : undefined)
-    };
-  });
-
-  const distinctQualities = deduplicateQualities(mappedQualities);
-
-  const videos = distinctQualities.filter(q => q.type === 'video');
-  const audios = distinctQualities.filter(q => q.type === 'audio');
-
-  videos.sort((a, b) => {
-    const valA = (a.height || 0) * 10000 + (a.bitrate || 0);
-    const valB = (b.height || 0) * 10000 + (b.bitrate || 0);
-    return valB - valA;
-  });
-
-  const bestVideo = videos[0];
-  const bestAudio = audios[0];
-
-  const slug = detectPlatform(cleanUrl);
-  const platformName = slug ? SUPPORTED_PLATFORMS[slug]?.name : (extractYouTubeId(cleanUrl) ? 'YouTube' : 'Social Media');
-  const ytId = extractYouTubeId(cleanUrl);
-  const thumbnail = rawData.thumbnail || (ytId ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg` : undefined);
-
-  let durationDisplay: string | undefined = undefined;
-  if (rawData.duration) {
-    const mins = Math.floor(rawData.duration / 60);
-    const secs = String(Math.round(rawData.duration % 60)).padStart(2, '0');
-    durationDisplay = `${mins}:${secs}`;
-  }
-
-  return {
-    success: true,
-    mediaInfo: {
-      title: rawData.title || `${platformName} Media`,
-      originalUrl: rawData.url || cleanUrl,
-      platform: platformName,
-      videoUrl: bestVideo ? (bestVideo.downloadUrl || bestVideo.url) : undefined,
-      audioUrl: bestAudio ? (bestAudio.downloadUrl || bestAudio.url) : undefined,
-      thumbnail: thumbnail,
-      duration: durationDisplay || rawData.duration,
-      qualities: distinctQualities.length > 0 ? distinctQualities : null,
-      products: rawData.products || [],
-      pagination: rawData.pagination,
-      sourceEngine: 'F-Engine 2 (AllDL Universal • 40+ Platforms)'
-    }
-  };
-}
-
-export async function extractMediaFEngine2(rawUrl: string): Promise<ApiResponse> {
-  const cleanUrl = rawUrl.trim();
-
-  const endpoints = [
-    '/api/f-engine-2/media',
-    'https://alldl.faizankhichi.me/api/media'
-  ];
-
-  for (const ep of endpoints) {
-    try {
-      const res = await fetch(ep, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ url: cleanUrl }),
-        signal: AbortSignal.timeout(12000)
-      });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.medias) && data.medias.length > 0) {
-          return formatFEngine2Response(data, cleanUrl);
-        }
-      }
-    } catch {
-      // try next
-    }
-  }
-
-  throw new Error('F-Engine 2 did not return downloadable formats.');
-}
-
-/* =====================================================================
    F-Engine 1 (Faizan Khichi Downloader API Engine)
    ===================================================================== */
 let cachedSig: string | null = null;
@@ -437,7 +347,7 @@ export async function getFaizanApiSig(): Promise<string> {
         }
       }
     } catch {
-      // try next
+      // try next endpoint
     }
   }
 
@@ -517,9 +427,10 @@ function formatFEngine1Response(rawData: any, cleanUrl: string): ApiResponse {
 }
 
 export async function extractMediaFEngine1(rawUrl: string): Promise<ApiResponse> {
-  const cleanUrl = rawUrl.trim();
+  const cleanUrl = cleanMediaUrl(rawUrl);
   const encodedUrl = encodeURIComponent(cleanUrl);
 
+  // 1. Try unified server-side endpoint first
   try {
     const res = await fetch(`/api/faizan/extract?url=${encodedUrl}`, {
       headers: { 'Accept': 'application/json' }
@@ -534,6 +445,7 @@ export async function extractMediaFEngine1(rawUrl: string): Promise<ApiResponse>
     console.info('F-Engine 1 server endpoint notice:', err?.message);
   }
 
+  // 2. Try signed direct endpoint
   try {
     const sig = await getFaizanApiSig();
     const ep = `/api/faizan/download?url=${encodedUrl}&sig=${encodeURIComponent(sig)}`;
@@ -556,7 +468,7 @@ export async function extractMediaFEngine1(rawUrl: string): Promise<ApiResponse>
    - Guaranteed single true video stream without duplicate quality cards!
    ===================================================================== */
 export async function extractMediaStandard(rawUrl: string): Promise<ApiResponse> {
-  const cleanUrl = rawUrl.trim();
+  const cleanUrl = cleanMediaUrl(rawUrl);
   const encodedUrl = encodeURIComponent(cleanUrl);
   const primaryApi = `/api/alldl?url=${encodedUrl}`;
   const directApi = `https://ahm7xmakki.com/api/alldl?url=${encodedUrl}`;
@@ -609,39 +521,16 @@ export async function extractMediaStandard(rawUrl: string): Promise<ApiResponse>
 }
 
 /* =====================================================================
-   Universal Extraction Engine with Seamless Resilience
-   - Never fails with "not returned" when a fallback engine has the stream!
+   Universal Extraction Engine
+   F-Engine 1 -> Standard Engine
    ===================================================================== */
 export async function extractMedia(
   videoUrl: string,
   engine: EngineChoice = 'auto'
 ): Promise<ApiResponse> {
-  const cleanUrl = videoUrl.trim();
+  const cleanUrl = cleanMediaUrl(videoUrl);
   if (!cleanUrl) {
     throw new Error('Please enter a valid video URL.');
-  }
-
-  // If user explicitly picked F-Engine 2
-  if (engine === 'f-engine-2') {
-    try {
-      const res = await extractMediaFEngine2(cleanUrl);
-      if (res && res.success && res.mediaInfo) return res;
-    } catch (e: any) {
-      console.info('F-Engine 2 pass, smoothly cascading to available engines:', e?.message);
-    }
-    // Fall back smoothly so user always gets the media!
-    try {
-      const f1 = await extractMediaFEngine1(cleanUrl);
-      if (f1 && f1.success && f1.mediaInfo) {
-        f1.mediaInfo.sourceEngine = 'F-Engine 1 (Fallback)';
-        return f1;
-      }
-    } catch {}
-    const std = await extractMediaStandard(cleanUrl);
-    if (std && std.mediaInfo) {
-      std.mediaInfo.sourceEngine = 'Standard Engine (F2 Fallback)';
-    }
-    return std;
   }
 
   // If user explicitly picked F-Engine 1
@@ -664,18 +553,8 @@ export async function extractMedia(
     return await extractMediaStandard(cleanUrl);
   }
 
-  // AUTO CASCADE:
-  // Step 1: Try F-Engine 2
-  try {
-    const f2Result = await extractMediaFEngine2(cleanUrl);
-    if (f2Result && f2Result.success && f2Result.mediaInfo) {
-      return f2Result;
-    }
-  } catch (err: any) {
-    console.info('Auto cascade pass F2:', err?.message);
-  }
-
-  // Step 2: Try F-Engine 1
+  // AUTO CASCADE (F-Engine 1 -> Standard):
+  // Step 1: Try F-Engine 1 (FAK LABS Multi-Quality)
   try {
     const f1Result = await extractMediaFEngine1(cleanUrl);
     if (f1Result && f1Result.success && f1Result.mediaInfo) {
@@ -685,6 +564,6 @@ export async function extractMedia(
     console.info('Auto cascade pass F1:', err?.message);
   }
 
-  // Step 3: Fallback to Standard Engine (Makki)
+  // Step 2: Fallback to Standard Engine (Makki)
   return await extractMediaStandard(cleanUrl);
 }
