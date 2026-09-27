@@ -1,7 +1,4 @@
 // Vercel Serverless Function: /api/download
-let cachedSig = null;
-let cachedExp = 0;
-
 const ENGINE_HEADERS = {
   'Accept': 'application/json',
   'Referer': 'https://downloader.faizankhichi.me/',
@@ -41,19 +38,14 @@ function cleanUrl(rawUrl) {
   }
 }
 
-async function fetchToken(forceFresh = false) {
-  const now = Math.floor(Date.now() / 1000);
-  if (!forceFresh && cachedSig && (cachedExp - now > 30)) {
-    return { sig: cachedSig, exp: cachedExp };
-  }
+async function fetchToken() {
   const res = await fetch('https://downloader.faizankhichi.me/api/token', {
     headers: ENGINE_HEADERS
   });
   if (!res.ok) throw new Error('Token error: ' + res.statusText);
   const data = await res.json();
-  cachedSig = data.sig;
-  cachedExp = data.exp || (now + 300);
-  return { sig: cachedSig, exp: cachedExp };
+  if (!data || !data.sig) throw new Error('Invalid token response');
+  return data.sig;
 }
 
 export default async function handler(req, res) {
@@ -76,16 +68,15 @@ export default async function handler(req, res) {
 
   try {
     if (!sig) {
-      const token = await fetchToken();
-      sig = token.sig;
+      sig = await fetchToken();
     }
 
     let downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(sig)}`;
     let upstreamRes = await fetch(downloadUrl, { headers: ENGINE_HEADERS });
 
     if (upstreamRes.status === 403) {
-      const fresh = await fetchToken(true);
-      downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(fresh.sig)}`;
+      const freshSig = await fetchToken();
+      downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(freshSig)}`;
       upstreamRes = await fetch(downloadUrl, { headers: ENGINE_HEADERS });
     }
 

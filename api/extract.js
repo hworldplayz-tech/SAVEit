@@ -1,7 +1,4 @@
 // Vercel Serverless Function: /api/extract
-let cachedSig = null;
-let cachedExp = 0;
-
 const ENGINE_HEADERS = {
   'Accept': 'application/json',
   'Referer': 'https://downloader.faizankhichi.me/',
@@ -52,28 +49,21 @@ function cleanUrl(rawUrl) {
   }
 }
 
-async function fetchToken(forceFresh = false) {
-  const now = Math.floor(Date.now() / 1000);
-  if (!forceFresh && cachedSig && (cachedExp - now > 30)) {
-    return { sig: cachedSig, exp: cachedExp };
-  }
-
+async function fetchToken() {
   const res = await fetch('https://downloader.faizankhichi.me/api/token', {
     headers: ENGINE_HEADERS
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to mint session token: ${res.statusText}`);
+    throw new Error(`Failed to mint session token: ${res.status} ${res.statusText}`);
   }
 
   const data = await res.json();
   if (!data || !data.sig) {
-    throw new Error('Invalid token response');
+    throw new Error('Invalid token response from stream engine');
   }
 
-  cachedSig = data.sig;
-  cachedExp = data.exp || (now + 300);
-  return { sig: cachedSig, exp: cachedExp };
+  return data.sig;
 }
 
 export default async function handler(req, res) {
@@ -105,19 +95,23 @@ export default async function handler(req, res) {
   const clean = cleanUrl(rawUrl);
 
   try {
-    const token = await fetchToken();
-    let downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(token.sig)}`;
+    // 1. Mint fresh token bound to current invocation egress IP
+    const sig = await fetchToken();
+
+    // 2. Fetch media download streams from upstream
+    let downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(sig)}`;
     let upstreamRes = await fetch(downloadUrl, { headers: ENGINE_HEADERS });
 
     if (upstreamRes.status === 403) {
-      const fresh = await fetchToken(true);
-      downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(fresh.sig)}`;
+      const freshSig = await fetchToken();
+      downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(clean)}&sig=${encodeURIComponent(freshSig)}`;
       upstreamRes = await fetch(downloadUrl, { headers: ENGINE_HEADERS });
     }
 
     const data = await upstreamRes.json().catch(() => ({}));
     return res.status(upstreamRes.status).json(data);
   } catch (err) {
-    return res.status(502).json({ error: err?.message || 'Engine extraction failed' });
+    console.error('Vercel extract error:', err);
+    return res.status(502).json({ error: err?.message || 'F-Engine 1 extraction failed' });
   }
 }

@@ -440,14 +440,23 @@ export async function extractMediaFEngine1(rawUrl: string): Promise<ApiResponse>
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(12000)
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.warn('F-Engine 1 endpoint returned non-JSON:', contentType, 'status:', res.status);
+        continue;
+      }
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         if (data && data.media && data.media.length > 0) {
           return formatEngine1Response(data, cleanUrl);
+        } else if (data && data.error) {
+          console.warn('F-Engine 1 upstream response note:', data.error);
         }
+      } else {
+        console.warn('F-Engine 1 extract HTTP status:', res.status);
       }
-    } catch {
-      // try next
+    } catch (err: any) {
+      console.warn('F-Engine 1 fetch attempt notice:', err?.message);
     }
   }
 
