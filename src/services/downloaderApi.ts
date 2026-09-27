@@ -105,7 +105,7 @@ export function cleanMediaUrl(rawUrl: string): string {
 }
 
 /**
- * 40+ Supported platforms map (FAK LABS Engine)
+ * 40+ Supported platforms map
  */
 export const SUPPORTED_PLATFORMS: Record<string, { name: string; hosts: string[] }> = {
   tiktok: { name: "TikTok", hosts: ["tiktok.com", "vt.tiktok.com", "vm.tiktok.com"] },
@@ -319,20 +319,19 @@ export function deduplicateQualities(qualities: MediaQuality[]): MediaQuality[] 
 }
 
 /* =====================================================================
-   F-Engine 1 (Faizan Khichi Downloader API Engine)
+   F-Engine 1 (Multi-Quality Engine)
    ===================================================================== */
 let cachedSig: string | null = null;
 let cachedSigExp = 0;
 
-export async function getFaizanApiSig(): Promise<string> {
+export async function getEngine1Sig(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (cachedSig && cachedSigExp - now > 30) {
     return cachedSig;
   }
 
   const tokenEndpoints = [
-    '/api/faizan/token',
-    'https://downloader.faizankhichi.me/api/token'
+    '/api/token'
   ];
 
   for (const ep of tokenEndpoints) {
@@ -351,10 +350,10 @@ export async function getFaizanApiSig(): Promise<string> {
     }
   }
 
-  throw new Error('Unable to establish session token with F-Engine 1.');
+  throw new Error('Unable to establish session token with stream engine.');
 }
 
-function formatFEngine1Response(rawData: any, cleanUrl: string): ApiResponse {
+function formatEngine1Response(rawData: any, cleanUrl: string): ApiResponse {
   const mediaList: any[] = Array.isArray(rawData.media) ? rawData.media : [];
   if (mediaList.length === 0) {
     throw new Error('F-Engine 1 returned no media links.');
@@ -421,7 +420,7 @@ function formatFEngine1Response(rawData: any, cleanUrl: string): ApiResponse {
       audioUrl: bestAudio ? bestAudio.url : undefined,
       thumbnail: thumbnail,
       qualities: distinct.length > 0 ? distinct : null,
-      sourceEngine: 'F-Engine 1 (FAK LABS Multi-Quality)'
+      sourceEngine: 'F-Engine 1 (Multi-Quality Pro)'
     }
   };
 }
@@ -430,57 +429,77 @@ export async function extractMediaFEngine1(rawUrl: string): Promise<ApiResponse>
   const cleanUrl = cleanMediaUrl(rawUrl);
   const encodedUrl = encodeURIComponent(cleanUrl);
 
-  // 1. Try unified server-side endpoint first
-  try {
-    const res = await fetch(`/api/faizan/extract?url=${encodedUrl}`, {
-      headers: { 'Accept': 'application/json' }
-    });
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (data && data.media && data.media.length > 0) {
-        return formatFEngine1Response(data, cleanUrl);
+  const extractEndpoints = [
+    `/api/extract?url=${encodedUrl}`
+  ];
+
+  // 1. Try unified extract endpoints (Works on Vercel Serverless and Local Express)
+  for (const ep of extractEndpoints) {
+    try {
+      const res = await fetch(ep, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(12000)
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data && data.media && data.media.length > 0) {
+          return formatEngine1Response(data, cleanUrl);
+        }
       }
+    } catch {
+      // try next
     }
-  } catch (err: any) {
-    console.info('F-Engine 1 server endpoint notice:', err?.message);
   }
 
-  // 2. Try signed direct endpoint
+  // 2. Try signed download endpoint
   try {
-    const sig = await getFaizanApiSig();
-    const ep = `/api/faizan/download?url=${encodedUrl}&sig=${encodeURIComponent(sig)}`;
-    const res = await fetch(ep, { headers: { 'Accept': 'application/json' } });
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (data && data.media && data.media.length > 0) {
-        return formatFEngine1Response(data, cleanUrl);
+    const sig = await getEngine1Sig();
+    const downloadEndpoints = [
+      `/api/download?url=${encodedUrl}&sig=${encodeURIComponent(sig)}`
+    ];
+    for (const ep of downloadEndpoints) {
+      try {
+        const res = await fetch(ep, { 
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(12000)
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.media && data.media.length > 0) {
+            return formatEngine1Response(data, cleanUrl);
+          }
+        }
+      } catch {
+        // try next
       }
     }
-  } catch (e: any) {
-    console.info('F-Engine 1 signed endpoint notice:', e?.message);
+  } catch {
+    // token minting failed or timed out
   }
 
   throw new Error('F-Engine 1 currently has no download streams for this link.');
 }
 
 /* =====================================================================
-   Standard Engine (Makki / Direct Stream)
-   - Guaranteed single true video stream without duplicate quality cards!
+   Standard Engine (Direct Stream)
+   - Universal high-speed engine, runs in browser and server
    ===================================================================== */
 export async function extractMediaStandard(rawUrl: string): Promise<ApiResponse> {
   const cleanUrl = cleanMediaUrl(rawUrl);
   const encodedUrl = encodeURIComponent(cleanUrl);
-  const primaryApi = `/api/alldl?url=${encodedUrl}`;
-  const directApi = `https://ahm7xmakki.com/api/alldl?url=${encodedUrl}`;
-  const corsProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(directApi)}`;
-
-  const candidates = [primaryApi, directApi, corsProxy];
+  
+  // Candidates: Local/Vercel proxy, direct API, and CORS mirrors
+  const candidates = [
+    `/api/alldl?url=${encodedUrl}`,
+    `https://ahm7xmakki.com/api/alldl?url=${encodedUrl}`
+  ];
 
   for (const ep of candidates) {
     try {
       const res = await fetch(ep, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(12000)
       });
 
       if (res.ok) {
@@ -521,7 +540,7 @@ export async function extractMediaStandard(rawUrl: string): Promise<ApiResponse>
 }
 
 /* =====================================================================
-   Universal Extraction Engine
+   Universal Extraction Engine with Seamless Fallback
    F-Engine 1 -> Standard Engine
    ===================================================================== */
 export async function extractMedia(
@@ -553,8 +572,8 @@ export async function extractMedia(
     return await extractMediaStandard(cleanUrl);
   }
 
-  // AUTO CASCADE (F-Engine 1 -> Standard):
-  // Step 1: Try F-Engine 1 (FAK LABS Multi-Quality)
+  // AUTO CASCADE (F-Engine 1 -> Standard Engine):
+  // Step 1: Try F-Engine 1 (Multi-Quality Pro)
   try {
     const f1Result = await extractMediaFEngine1(cleanUrl);
     if (f1Result && f1Result.success && f1Result.mediaInfo) {
@@ -564,6 +583,6 @@ export async function extractMedia(
     console.info('Auto cascade pass F1:', err?.message);
   }
 
-  // Step 2: Fallback to Standard Engine (Makki)
+  // Step 2: Fallback to Standard Engine
   return await extractMediaStandard(cleanUrl);
 }

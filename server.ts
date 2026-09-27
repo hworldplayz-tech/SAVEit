@@ -24,10 +24,10 @@ app.use((_req, res, next) => {
 });
 
 /* =====================================================================
-   Faizan Khichi Engine Server-Side Integration
+   F-Engine 1 Server-Side Integration
    ===================================================================== */
-let cachedFaizanSig: string | null = null;
-let cachedFaizanExp = 0;
+let cachedEngine1Sig: string | null = null;
+let cachedEngine1Exp = 0;
 
 export function cleanMediaUrl(rawUrl: string): string {
   if (!rawUrl) return '';
@@ -72,49 +72,51 @@ export function cleanMediaUrl(rawUrl: string): string {
   }
 }
 
-const FAIZAN_HEADERS = {
+const ENGINE1_HEADERS = {
   'Accept': 'application/json',
   'Referer': 'https://downloader.faizankhichi.me/',
   'Origin': 'https://downloader.faizankhichi.me',
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
 
-async function fetchFaizanToken(forceFresh = false): Promise<{ sig: string; exp: number }> {
+async function fetchEngine1Token(forceFresh = false): Promise<{ sig: string; exp: number }> {
   const now = Math.floor(Date.now() / 1000);
-  if (!forceFresh && cachedFaizanSig && (cachedFaizanExp - now > 30)) {
-    return { sig: cachedFaizanSig, exp: cachedFaizanExp };
+  if (!forceFresh && cachedEngine1Sig && (cachedEngine1Exp - now > 30)) {
+    return { sig: cachedEngine1Sig, exp: cachedEngine1Exp };
   }
 
   const res = await fetch('https://downloader.faizankhichi.me/api/token', {
-    headers: FAIZAN_HEADERS
+    headers: ENGINE1_HEADERS
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to mint session token from Faizan engine: ${res.statusText}`);
+    throw new Error(`Failed to mint session token from stream engine: ${res.statusText}`);
   }
 
   const data = await res.json() as any;
   if (!data || !data.sig) {
-    throw new Error('Invalid token response from Faizan engine');
+    throw new Error('Invalid token response from stream engine');
   }
 
-  cachedFaizanSig = data.sig;
-  cachedFaizanExp = data.exp || (now + 300);
-  return { sig: cachedFaizanSig, exp: cachedFaizanExp };
+  cachedEngine1Sig = data.sig;
+  cachedEngine1Exp = data.exp || (now + 300);
+  return { sig: cachedEngine1Sig, exp: cachedEngine1Exp };
 }
 
 // Token route
-app.get('/api/faizan/token', async (_req: Request, res: Response) => {
+const tokenHandler = async (_req: Request, res: Response) => {
   try {
-    const token = await fetchFaizanToken();
+    const token = await fetchEngine1Token();
     return res.json(token);
   } catch (err: any) {
     return res.status(502).json({ error: err?.message || 'Token minting failed' });
   }
-});
+};
+app.get('/api/token', tokenHandler);
+app.get('/api/faizan/token', tokenHandler);
 
 // Download proxy route
-app.get('/api/faizan/download', async (req: Request, res: Response) => {
+const downloadHandler = async (req: Request, res: Response) => {
   const rawTargetUrl = req.query.url as string;
   let sig = req.query.sig as string;
 
@@ -126,31 +128,32 @@ app.get('/api/faizan/download', async (req: Request, res: Response) => {
 
   try {
     if (!sig) {
-      const token = await fetchFaizanToken();
+      const token = await fetchEngine1Token();
       sig = token.sig;
     }
 
     let downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(targetUrl)}&sig=${encodeURIComponent(sig)}`;
-    let upstreamRes = await fetch(downloadUrl, { headers: FAIZAN_HEADERS });
+    let upstreamRes = await fetch(downloadUrl, { headers: ENGINE1_HEADERS });
 
-    // Handle token expiration mid-flight (403 retry as in Faizan app.js)
     if (upstreamRes.status === 403) {
-      cachedFaizanSig = null;
-      const freshToken = await fetchFaizanToken(true);
+      cachedEngine1Sig = null;
+      const freshToken = await fetchEngine1Token(true);
       downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(targetUrl)}&sig=${encodeURIComponent(freshToken.sig)}`;
-      upstreamRes = await fetch(downloadUrl, { headers: FAIZAN_HEADERS });
+      upstreamRes = await fetch(downloadUrl, { headers: ENGINE1_HEADERS });
     }
 
     const data = await upstreamRes.json();
     return res.status(upstreamRes.status).json(data);
   } catch (err: any) {
-    return res.status(502).json({ error: err?.message || 'Faizan engine request failed' });
+    return res.status(502).json({ error: err?.message || 'Engine request failed' });
   }
-});
+};
+app.get('/api/download', downloadHandler);
+app.get('/api/faizan/download', downloadHandler);
 
-// All-in-one Faizan extract endpoint (simplifies client code)
-app.get('/api/faizan/extract', async (req: Request, res: Response) => {
-  const rawTargetUrl = req.query.url as string;
+// All-in-one extract endpoint
+const extractHandler = async (req: Request, res: Response) => {
+  const rawTargetUrl = (req.query.url as string) || (req.body && req.body.url);
   if (!rawTargetUrl) {
     return res.status(400).json({ error: 'Missing "url" parameter' });
   }
@@ -158,22 +161,25 @@ app.get('/api/faizan/extract', async (req: Request, res: Response) => {
   const targetUrl = cleanMediaUrl(rawTargetUrl);
 
   try {
-    const token = await fetchFaizanToken();
+    const token = await fetchEngine1Token();
     let downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(targetUrl)}&sig=${encodeURIComponent(token.sig)}`;
-    let upstreamRes = await fetch(downloadUrl, { headers: FAIZAN_HEADERS });
+    let upstreamRes = await fetch(downloadUrl, { headers: ENGINE1_HEADERS });
 
     if (upstreamRes.status === 403) {
-      const fresh = await fetchFaizanToken(true);
+      const fresh = await fetchEngine1Token(true);
       downloadUrl = `https://downloader.faizankhichi.me/api/download?url=${encodeURIComponent(targetUrl)}&sig=${encodeURIComponent(fresh.sig)}`;
-      upstreamRes = await fetch(downloadUrl, { headers: FAIZAN_HEADERS });
+      upstreamRes = await fetch(downloadUrl, { headers: ENGINE1_HEADERS });
     }
 
     const data = await upstreamRes.json();
     return res.status(upstreamRes.status).json(data);
   } catch (err: any) {
-    return res.status(502).json({ error: err?.message || 'Faizan engine extraction failed' });
+    return res.status(502).json({ error: err?.message || 'Engine extraction failed' });
   }
-});
+};
+app.get('/api/extract', extractHandler);
+app.post('/api/extract', extractHandler);
+app.get('/api/faizan/extract', extractHandler);
 
 /* =====================================================================
    Standard Engine (Makki / AllDL) Proxy

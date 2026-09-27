@@ -208,10 +208,10 @@ export default function Home({ isDarkMode }: HomeProps) {
               ? 'bg-brand text-white shadow-md shadow-brand/20'
               : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
           }`}
-          title="Faizan Khichi Downloader Engine (1080p, 720p, Multi-Quality)"
+          title="F-Engine 1 (1080p, 720p, Multi-Quality Pro)"
         >
           <Sparkles size={13} className={selectedEngine === 'f-engine-1' ? 'text-yellow-200' : 'text-amber-400'} />
-          <span>F-Engine 1 (FAK LABS Multi-Quality)</span>
+          <span>F-Engine 1 (Multi-Quality Pro)</span>
         </button>
         <button
           type="button"
@@ -802,9 +802,9 @@ export default function Home({ isDarkMode }: HomeProps) {
           <div className="w-10 h-10 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
             <Radio size={20} />
           </div>
-          <h4 className="font-bold text-sm mb-1.5">Faizan F-Engine 1 + Standard</h4>
+          <h4 className="font-bold text-sm mb-1.5">F-Engine 1 + Standard Engine</h4>
           <p className="text-xs text-zinc-500 leading-relaxed">
-            Automatic cascade between F-Engine 1 (FAK LABS 1080p/720p) and Standard Engine with seamless fallback.
+            Automatic cascade between F-Engine 1 (1080p/720p Pro) and Standard Engine with seamless fallback.
           </p>
         </div>
 

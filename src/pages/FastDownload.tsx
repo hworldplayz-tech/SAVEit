@@ -166,7 +166,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
             }`}
           >
             <Sparkles size={13} className={selectedEngine === 'f-engine-1' ? 'text-yellow-200' : 'text-amber-400'} />
-            <span>F-Engine 1 (FAK LABS)</span>
+            <span>F-Engine 1 (Multi-Quality Pro)</span>
           </button>
           <button
             type="button"
