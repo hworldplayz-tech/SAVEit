@@ -233,7 +233,18 @@ app.post('/api/get-video-info', async (req: Request, res: Response) => {
       })
     });
 
-    const data = await upstreamRes.json();
+    const rawText = await upstreamRes.text();
+    let data: any;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = {
+        error: upstreamRes.status === 502
+          ? 'Backend VPS is currently unreachable or restarting (502 Bad Gateway). Please check PM2 status on your server.'
+          : `Backend returned unexpected response (${upstreamRes.status})`
+      };
+    }
+
     return res.status(upstreamRes.status).json(data);
   } catch (err: any) {
     return res.status(502).json({ error: err?.message || 'Failed to connect to SaveIt backend info service' });
@@ -260,7 +271,18 @@ app.post('/api/generate-token', async (req: Request, res: Response) => {
       })
     });
 
-    const data = await upstreamRes.json();
+    const rawText = await upstreamRes.text();
+    let data: any;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = {
+        error: upstreamRes.status === 502
+          ? 'Backend VPS is currently unreachable or restarting (502 Bad Gateway). Please check PM2 status on your server.'
+          : `Backend returned unexpected response (${upstreamRes.status})`
+      };
+    }
+
     return res.status(upstreamRes.status).json(data);
   } catch (err: any) {
     return res.status(502).json({ error: err?.message || 'Failed to connect to SaveIt backend API' });

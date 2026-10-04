@@ -275,10 +275,12 @@ export async function getVideoInfo(rawUrl: string): Promise<ApiResponse> {
   const backendBase = getBackendApiBase();
   const isLinksshareHost = typeof window !== 'undefined' && window.location.hostname.endsWith('linksshare.online');
 
-  // Candidate endpoints for CORS compatibility across preview & production:
+  // Candidate endpoints for CORS compatibility:
+  // On *.linksshare.online, we can query the backend or proxy.
+  // In dev / preview environments, always use the proxy (/api/get-video-info) to avoid browser CORS blocks.
   const candidateEndpoints = isLinksshareHost
-    ? [`${backendBase}/api/get-video-info`, '/api/get-video-info']
-    : ['/api/get-video-info', `${backendBase}/api/get-video-info`];
+    ? ['/api/get-video-info', `${backendBase}/api/get-video-info`]
+    : ['/api/get-video-info'];
 
   let serverData: any = null;
 
@@ -410,9 +412,12 @@ export async function requestDownloadToken(
   const backendBase = getBackendApiBase();
   const isLinksshareHost = typeof window !== 'undefined' && window.location.hostname.endsWith('linksshare.online');
 
+  // Candidate endpoints:
+  // On *.linksshare.online, try local proxy first then direct backend.
+  // In preview/dev environments, ONLY use local proxy (/api/generate-token) to prevent browser CORS block.
   const candidateEndpoints = isLinksshareHost
-    ? [`${backendBase}/api/generate-token`, '/api/generate-token']
-    : ['/api/generate-token', `${backendBase}/api/generate-token`];
+    ? ['/api/generate-token', `${backendBase}/api/generate-token`]
+    : ['/api/generate-token'];
 
   let lastError: Error | null = null;
 
@@ -446,9 +451,13 @@ export async function requestDownloadToken(
         }
         throw new Error(data.error);
       }
+
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}: Failed to generate download token.`);
+      }
     } catch (err: any) {
       lastError = err;
-      if (err?.message?.includes('TOKEN_EXPIRED')) {
+      if (err?.message?.includes('TOKEN_EXPIRED') || (err?.message && !err.message.includes('Failed to fetch'))) {
         throw err;
       }
     }
