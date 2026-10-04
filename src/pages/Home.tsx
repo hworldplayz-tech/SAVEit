@@ -18,19 +18,19 @@ import {
   Radio,
   Layers,
   Lock,
-  ExternalLink
+  ExternalLink,
+  SlidersHorizontal,
+  ChevronDown
 } from 'lucide-react';
 import { 
-  extractMedia, 
+  getVideoInfo, 
   MediaInfo, 
   getPosterOptions, 
-  downloadMediaDirectly,
-  downloadPosterDirectly,
+  downloadPosterDirectly, 
   cleanMediaUrl,
   requestDownloadToken,
   initiateTokenStreamDownload,
   PosterOption,
-  EngineChoice,
   deduplicateQualities
 } from '../services/downloaderApi';
 
@@ -46,6 +46,9 @@ export default function Home({ isDarkMode }: HomeProps) {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'video' | 'audio' | 'poster'>('video');
   
+  // Dynamic resolution selection state (from /api/get-video-info)
+  const [selectedResolution, setSelectedResolution] = useState<string>('1080p');
+
   // Video preview player state
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   
@@ -61,9 +64,6 @@ export default function Home({ isDarkMode }: HomeProps) {
     message: string;
   } | null>(null);
 
-  // Engine selection state: 'auto' | 'f-engine-1' | 'standard'
-  const [selectedEngine, setSelectedEngine] = useState<EngineChoice>('auto');
-
   // Paste button state
   const [isPasted, setIsPasted] = useState(false);
 
@@ -71,7 +71,6 @@ export default function Home({ isDarkMode }: HomeProps) {
     try {
       const text = await navigator.clipboard.readText();
       if (text) {
-        // Automatically clean URL to strip ?si=... tracking tokens
         setUrl(cleanMediaUrl(text));
         setIsPasted(true);
         setTimeout(() => setIsPasted(false), 1500);
@@ -86,7 +85,6 @@ export default function Home({ isDarkMode }: HomeProps) {
     const clean = cleanMediaUrl(url);
     if (!clean) return;
 
-    // Update input display to clean canonical URL
     setUrl(clean);
 
     setLoading(true);
@@ -98,9 +96,20 @@ export default function Home({ isDarkMode }: HomeProps) {
     setSubmittedUrl(clean);
 
     try {
-      const response = await extractMedia(clean, selectedEngine);
+      // Step 1: Call POST /api/get-video-info
+      const response = await getVideoInfo(clean);
       if (response && response.mediaInfo) {
         setMediaInfo(response.mediaInfo);
+
+        // Auto-select the highest available resolution
+        const available = response.mediaInfo.resolutions || [];
+        if (available.length > 0) {
+          setSelectedResolution(available[0]);
+        } else if (response.mediaInfo.qualities && response.mediaInfo.qualities.length > 0) {
+          const first = response.mediaInfo.qualities[0].rawQuality || response.mediaInfo.qualities[0].quality;
+          if (first) setSelectedResolution(first);
+        }
+
         if (!response.mediaInfo.videoUrl && response.mediaInfo.audioUrl) {
           setActiveTab('audio');
         } else {
@@ -110,37 +119,36 @@ export default function Home({ isDarkMode }: HomeProps) {
         throw new Error('No downloadable media was found for this link.');
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to extract media. Please verify the link and try again.');
+      setError(err?.message || 'Failed to analyze video. Please verify the link and try again.');
     } finally {
       setLoading(false);
     }
   };
 
   /**
-   * Tokenized Download Handler:
-   * Requests JWT token via POST ${process.env.NEXT_PUBLIC_API_URL}/api/generate-token
-   * and initiates direct download stream via the returned downloadUrl.
+   * Step 2: Request token via POST /api/generate-token and redirect to downloadUrl
    */
-  const handleDownloadWithToken = async (qualityParam: string = '1080p', formatKey: string) => {
+  const handleDownloadWithToken = async (qualityParam: string, formatKey: string) => {
     const targetUrl = submittedUrl || url;
     if (!targetUrl) return;
+
+    const chosenQuality = qualityParam || selectedResolution || '1080p';
 
     setDownloadingFormat(formatKey);
     setIsMintingToken(true);
     setTokenExpiryAlert(null);
 
     try {
-      const downloadUrl = await requestDownloadToken(targetUrl, qualityParam);
-      // Redirect user directly to downloadUrl to initiate the secure download stream
+      const downloadUrl = await requestDownloadToken(targetUrl, chosenQuality);
       initiateTokenStreamDownload(downloadUrl);
     } catch (err: any) {
       console.error('Download token failure:', err);
       const msg = err?.message || 'Download token error';
       if (msg.includes('TOKEN_EXPIRED') || msg.includes('410') || msg.toLowerCase().includes('expire')) {
         setTokenExpiryAlert({
-          quality: qualityParam,
+          quality: chosenQuality,
           formatKey,
-          message: 'Your download token has expired (15-minute expiration limit). Please regenerate a new link below.'
+          message: 'Your download token has expired (15-minute expiration limit). Please regenerate below.'
         });
       } else {
         setError(msg);
@@ -192,6 +200,18 @@ export default function Home({ isDarkMode }: HomeProps) {
     return deduplicateQualities(videos);
   }, [mediaInfo]);
 
+  // Available dynamic resolutions from /api/get-video-info
+  const availableResolutions = useMemo(() => {
+    if (!mediaInfo) return [];
+    if (Array.isArray(mediaInfo.resolutions) && mediaInfo.resolutions.length > 0) {
+      return mediaInfo.resolutions;
+    }
+    if (mediaInfo.qualities && mediaInfo.qualities.length > 0) {
+      return mediaInfo.qualities.map(q => q.rawQuality || q.quality).filter(Boolean);
+    }
+    return ['1080p', '720p', '480p', '360p'];
+  }, [mediaInfo]);
+
   return (
     <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-12 md:py-20">
       
@@ -202,8 +222,8 @@ export default function Home({ isDarkMode }: HomeProps) {
           animate={{ opacity: 1, scale: 1 }}
           className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-[10px] font-black uppercase tracking-[2px] mb-6 shadow-sm"
         >
-          <span className="w-2 h-2 rounded-full bg-brand animate-pulse"></span>
-          <span>SAVEit Pro • Multi-Engine Downloader</span>
+          <ShieldCheck size={13} className="text-emerald-500" />
+          <span>SAVEit Pro • Dynamic Resolution Gateway</span>
         </motion.div>
 
         <h1 className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight mb-4 font-sans leading-[1.05]">
@@ -211,53 +231,8 @@ export default function Home({ isDarkMode }: HomeProps) {
           <span className="text-brand">Media Downloader.</span>
         </h1>
         <p className={`text-base sm:text-lg max-w-2xl mx-auto font-medium leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-          Download high-resolution videos, lossless audio, and official posters from YouTube, TikTok, Instagram, and 40+ platforms without watermarks.
+          Download high-resolution videos, lossless audio, and official posters from YouTube, TikTok, Instagram, and 40+ platforms with dynamic resolution selection.
         </p>
-      </div>
-
-      {/* Engine Selection Pills */}
-      <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
-        <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mr-1">
-          Engine:
-        </span>
-        <button
-          type="button"
-          onClick={() => setSelectedEngine('auto')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-            selectedEngine === 'auto'
-              ? 'bg-brand text-white shadow-md shadow-brand/20'
-              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
-          }`}
-          title="Auto Cascade (F-Engine 1 -> Standard)"
-        >
-          <Zap size={13} />
-          <span>Auto (F1 → Standard)</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSelectedEngine('f-engine-1')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-            selectedEngine === 'f-engine-1'
-              ? 'bg-brand text-white shadow-md shadow-brand/20'
-              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
-          }`}
-          title="F-Engine 1 (1080p, 720p, Multi-Quality Pro)"
-        >
-          <Sparkles size={13} className={selectedEngine === 'f-engine-1' ? 'text-yellow-200' : 'text-amber-400'} />
-          <span>F-Engine 1 (Multi-Quality Pro)</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSelectedEngine('standard')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-            selectedEngine === 'standard'
-              ? 'bg-brand text-white shadow-md shadow-brand/20'
-              : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
-          }`}
-          title="Standard Direct Stream Engine"
-        >
-          <span>Standard Engine</span>
-        </button>
       </div>
 
       {/* Main Input Search Console */}
@@ -613,30 +588,84 @@ export default function Home({ isDarkMode }: HomeProps) {
 
                   {activeTab === 'video' && (
                     <div className="space-y-4">
-                      {/* Primary Video Download Button */}
-                      {mediaInfo.videoUrl ? (
-                        <div>
-                          <button
-                            id="main-download-video-btn"
-                            type="button"
-                            onClick={() => handleDownloadWithToken('1080p', 'video-primary')}
-                            disabled={isMintingToken}
-                            className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-80"
-                          >
-                            {downloadingFormat === 'video-primary' ? (
-                              <>
-                                <ShieldCheck size={20} className="text-white animate-pulse" />
-                                <span>Minting Token &amp; Starting Stream...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Download size={20} />
-                                <span>Download Video (High Quality MP4)</span>
-                              </>
-                            )}
-                          </button>
+                      {/* Dynamic Resolution Dropdown Selector Box */}
+                      <div className={`p-4 rounded-2xl border transition-all ${
+                        isDarkMode ? 'bg-zinc-900/80 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+                      }`}>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                          <div className="flex items-center gap-2">
+                            <SlidersHorizontal size={16} className="text-brand" />
+                            <span className="text-xs font-black uppercase tracking-wider">
+                              Choose Video Resolution:
+                            </span>
+                          </div>
+                          <div className="relative">
+                            <select
+                              value={selectedResolution}
+                              onChange={(e) => setSelectedResolution(e.target.value)}
+                              className={`w-full sm:w-auto appearance-none font-bold text-xs rounded-xl px-4 py-2.5 pr-8 border focus:outline-none focus:ring-2 focus:ring-brand cursor-pointer shadow-sm ${
+                                isDarkMode 
+                                  ? 'bg-black border-zinc-700 text-white' 
+                                  : 'bg-white border-zinc-300 text-zinc-900'
+                              }`}
+                            >
+                              {availableResolutions.map((res) => (
+                                <option key={res} value={res}>
+                                  {res} {res === '1080p' ? '(Full HD MP4)' : res === '720p' ? '(HD MP4)' : '(MP4 Stream)'}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-2.5 top-3 pointer-events-none text-zinc-400" />
+                          </div>
                         </div>
-                      ) : null}
+
+                        {/* Interactive Chips for Fast 1-Click Resolution Selection */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Available:</span>
+                          {availableResolutions.map((res) => {
+                            const isSelected = selectedResolution === res;
+                            return (
+                              <button
+                                key={res}
+                                type="button"
+                                onClick={() => setSelectedResolution(res)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-brand text-white shadow-md shadow-brand/20 scale-105'
+                                    : isDarkMode 
+                                      ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' 
+                                      : 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300'
+                                }`}
+                              >
+                                {res}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Primary Video Download Button for Chosen Resolution */}
+                      <div>
+                        <button
+                          id="main-download-video-btn"
+                          type="button"
+                          onClick={() => handleDownloadWithToken(selectedResolution, 'video-primary')}
+                          disabled={isMintingToken}
+                          className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-80"
+                        >
+                          {downloadingFormat === 'video-primary' ? (
+                            <>
+                              <ShieldCheck size={20} className="text-white animate-pulse" />
+                              <span>Minting {selectedResolution} Token...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download size={20} />
+                              <span>Download Video ({selectedResolution} MP4)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
 
                       {/* Video Qualities Section (Direct Download Button with Secure Token) */}
                       {videoQualities.length > 0 && (

@@ -15,19 +15,19 @@ import {
   Sparkles, 
   RefreshCw,
   ShieldCheck,
-  Lock
+  Lock,
+  SlidersHorizontal,
+  ChevronDown
 } from 'lucide-react';
 import { 
-  extractMedia, 
+  getVideoInfo, 
   MediaInfo, 
   getPosterOptions, 
-  downloadMediaDirectly, 
   downloadPosterDirectly, 
   cleanMediaUrl,
   requestDownloadToken,
   initiateTokenStreamDownload,
   PosterOption, 
-  EngineChoice,
   deduplicateQualities
 } from '../services/downloaderApi';
 
@@ -43,6 +43,9 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [activeTab, setActiveTab] = useState<'video' | 'audio' | 'poster'>('video');
 
+  // Dynamic resolution state
+  const [selectedResolution, setSelectedResolution] = useState<string>('1080p');
+
   // Preview & masked states
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [previewPoster, setPreviewPoster] = useState<PosterOption | null>(null);
@@ -53,9 +56,6 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     formatKey: string;
     message: string;
   } | null>(null);
-
-  // Engine selection state: 'auto' | 'f-engine-1' | 'standard'
-  const [selectedEngine, setSelectedEngine] = useState<EngineChoice>('auto');
 
   const fetchDownload = async (e: FormEvent) => {
     e.preventDefault();
@@ -72,9 +72,18 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     setSubmittedUrl(clean);
 
     try {
-      const response = await extractMedia(clean, selectedEngine);
+      const response = await getVideoInfo(clean);
       if (response && response.mediaInfo) {
         setMedia(response.mediaInfo);
+
+        const available = response.mediaInfo.resolutions || [];
+        if (available.length > 0) {
+          setSelectedResolution(available[0]);
+        } else if (response.mediaInfo.qualities && response.mediaInfo.qualities.length > 0) {
+          const first = response.mediaInfo.qualities[0].rawQuality || response.mediaInfo.qualities[0].quality;
+          if (first) setSelectedResolution(first);
+        }
+
         if (!response.mediaInfo.videoUrl && response.mediaInfo.audioUrl) {
           setActiveTab('audio');
         } else {
@@ -92,25 +101,27 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
 
   /**
    * Tokenized Download Handler
-   * POST ${process.env.NEXT_PUBLIC_API_URL}/api/generate-token
+   * POST /api/generate-token
    */
-  const handleDownloadWithToken = async (qualityParam: string = '1080p', formatKey: string) => {
+  const handleDownloadWithToken = async (qualityParam: string, formatKey: string) => {
     const targetUrl = submittedUrl || url;
     if (!targetUrl) return;
+
+    const chosenQuality = qualityParam || selectedResolution || '1080p';
 
     setDownloadingFormat(formatKey);
     setIsMintingToken(true);
     setTokenExpiryAlert(null);
 
     try {
-      const downloadUrl = await requestDownloadToken(targetUrl, qualityParam);
+      const downloadUrl = await requestDownloadToken(targetUrl, chosenQuality);
       initiateTokenStreamDownload(downloadUrl);
     } catch (err: any) {
       console.error('Download token failure:', err);
       const msg = err?.message || 'Download token error';
       if (msg.includes('TOKEN_EXPIRED') || msg.includes('410') || msg.toLowerCase().includes('expire')) {
         setTokenExpiryAlert({
-          quality: qualityParam,
+          quality: chosenQuality,
           formatKey,
           message: 'Your download token has expired (15-min expiration limit). Please regenerate below.'
         });
@@ -149,6 +160,17 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     return deduplicateQualities(videos);
   }, [media]);
 
+  const availableResolutions = useMemo(() => {
+    if (!media) return [];
+    if (Array.isArray(media.resolutions) && media.resolutions.length > 0) {
+      return media.resolutions;
+    }
+    if (media.qualities && media.qualities.length > 0) {
+      return media.qualities.map(q => q.rawQuality || q.quality).filter(Boolean);
+    }
+    return ['1080p', '720p', '480p', '360p'];
+  }, [media]);
+
   return (
     <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-16 md:py-24">
       {/* Fast Theme Hero */}
@@ -175,48 +197,6 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
 
       {/* Pro Search Bar */}
       <div className="max-w-2xl mx-auto mb-20">
-        {/* Engine Selector */}
-        <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
-          <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mr-1">
-            Engine:
-          </span>
-          <button
-            type="button"
-            onClick={() => setSelectedEngine('auto')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              selectedEngine === 'auto'
-                ? 'bg-brand text-white shadow-md shadow-brand/20'
-                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
-            }`}
-          >
-            <Zap size={13} />
-            <span>Auto (F1 → Standard)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedEngine('f-engine-1')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              selectedEngine === 'f-engine-1'
-                ? 'bg-brand text-white shadow-md shadow-brand/20'
-                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
-            }`}
-          >
-            <Sparkles size={13} className={selectedEngine === 'f-engine-1' ? 'text-yellow-200' : 'text-amber-400'} />
-            <span>F-Engine 1 (Multi-Quality Pro)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedEngine('standard')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              selectedEngine === 'standard'
-                ? 'bg-brand text-white shadow-md shadow-brand/20'
-                : isDarkMode ? 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200' : 'bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-900'
-            }`}
-          >
-            <span>Standard Engine</span>
-          </button>
-        </div>
-
         <form onSubmit={fetchDownload} className="relative group">
           <div className={`absolute -inset-1 bg-gradient-to-r from-brand to-red-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000 ${isLoading ? 'opacity-0' : ''}`}></div>
           <div className={`relative flex flex-col md:flex-row gap-2 p-2.5 rounded-2xl ${isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'} border shadow-xl`}>
@@ -409,22 +389,75 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
 
                 {activeTab === 'video' && (
                   <div className="space-y-4">
+                    {/* Dynamic Resolution Dropdown Selector */}
+                    <div className={`p-4 rounded-2xl border text-left transition-all ${
+                      isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+                    }`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-2.5">
+                        <div className="flex items-center gap-2">
+                          <SlidersHorizontal size={14} className="text-brand" />
+                          <span className="text-[11px] font-black uppercase tracking-wider text-zinc-400">
+                            Resolution:
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <select
+                            value={selectedResolution}
+                            onChange={(e) => setSelectedResolution(e.target.value)}
+                            className={`w-full sm:w-auto appearance-none font-bold text-xs rounded-lg px-3 py-1.5 pr-7 border focus:outline-none focus:ring-2 focus:ring-brand cursor-pointer ${
+                              isDarkMode 
+                                ? 'bg-black border-zinc-700 text-white' 
+                                : 'bg-white border-zinc-300 text-zinc-900'
+                            }`}
+                          >
+                            {availableResolutions.map((res) => (
+                              <option key={res} value={res}>
+                                {res} Stream
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown size={12} className="absolute right-2 top-2.5 pointer-events-none text-zinc-400" />
+                        </div>
+                      </div>
+
+                      {/* Chips */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {availableResolutions.map((res) => {
+                          const isSelected = selectedResolution === res;
+                          return (
+                            <button
+                              key={res}
+                              type="button"
+                              onClick={() => setSelectedResolution(res)}
+                              className={`px-2 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-brand text-white shadow'
+                                  : isDarkMode ? 'bg-zinc-800 text-zinc-400 hover:text-white' : 'bg-zinc-200 text-zinc-600 hover:text-black'
+                              }`}
+                            >
+                              {res}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     {media.videoUrl && (
                       <button 
                         type="button"
-                        onClick={() => handleDownloadWithToken('1080p', 'fast-video')}
+                        onClick={() => handleDownloadWithToken(selectedResolution, 'fast-video')}
                         disabled={isMintingToken}
                         className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-red-500/30 transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75"
                       >
                         {downloadingFormat === 'fast-video' ? (
                           <>
                             <ShieldCheck size={18} className="animate-pulse" />
-                            <span>Minting Token &amp; Stream...</span>
+                            <span>Minting {selectedResolution} Token...</span>
                           </>
                         ) : (
                           <>
                             <Video size={18} />
-                            <span>Download Video (MP4)</span>
+                            <span>Download Video ({selectedResolution} MP4)</span>
                           </>
                         )}
                       </button>
