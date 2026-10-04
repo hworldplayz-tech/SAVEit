@@ -209,6 +209,39 @@ app.get('/api/alldl', async (req: Request, res: Response) => {
 });
 
 /* =====================================================================
+   SaveIt Official Backend Proxy (/api/generate-token)
+   Forwards to: https://api.linksshare.online/api/generate-token
+   ===================================================================== */
+const BACKEND_API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://api.linksshare.online';
+
+app.post('/api/generate-token', async (req: Request, res: Response) => {
+  const { videoUrl, quality } = req.body || {};
+  if (!videoUrl) {
+    return res.status(400).json({ error: 'Missing "videoUrl" in request body' });
+  }
+
+  try {
+    const upstreamRes = await fetch(`${BACKEND_API_BASE}/api/generate-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'https://saveit.linksshare.online',
+        'Referer': 'https://saveit.linksshare.online/',
+      },
+      body: JSON.stringify({
+        videoUrl: cleanMediaUrl(videoUrl),
+        quality: quality || '1080p'
+      })
+    });
+
+    const data = await upstreamRes.json();
+    return res.status(upstreamRes.status).json(data);
+  } catch (err: any) {
+    return res.status(502).json({ error: err?.message || 'Failed to connect to SaveIt backend API' });
+  }
+});
+
+/* =====================================================================
    Vite Middleware (Dev) vs Static Assets (Prod)
    ===================================================================== */
 async function startServer() {

@@ -13,7 +13,9 @@ import {
   X, 
   Eye, 
   Sparkles, 
-  RefreshCw 
+  RefreshCw,
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
 import { 
   extractMedia, 
@@ -22,6 +24,8 @@ import {
   downloadMediaDirectly, 
   downloadPosterDirectly, 
   cleanMediaUrl,
+  requestDownloadToken,
+  initiateTokenStreamDownload,
   PosterOption, 
   EngineChoice,
   deduplicateQualities
@@ -43,6 +47,12 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [previewPoster, setPreviewPoster] = useState<PosterOption | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [isMintingToken, setIsMintingToken] = useState(false);
+  const [tokenExpiryAlert, setTokenExpiryAlert] = useState<{
+    quality: string;
+    formatKey: string;
+    message: string;
+  } | null>(null);
 
   // Engine selection state: 'auto' | 'f-engine-1' | 'standard'
   const [selectedEngine, setSelectedEngine] = useState<EngineChoice>('auto');
@@ -55,6 +65,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     setUrl(clean);
     setIsLoading(true);
     setError(null);
+    setTokenExpiryAlert(null);
     setMedia(null);
     setIsPlayingPreview(false);
     setPreviewPoster(null);
@@ -79,14 +90,39 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
     }
   };
 
-  const handleDownload = (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
-    if (!sourceUrl) return;
+  /**
+   * Tokenized Download Handler
+   * POST ${process.env.NEXT_PUBLIC_API_URL}/api/generate-token
+   */
+  const handleDownloadWithToken = async (qualityParam: string = '1080p', formatKey: string) => {
+    const targetUrl = submittedUrl || url;
+    if (!targetUrl) return;
+
     setDownloadingFormat(formatKey);
-    const baseName = media?.title || 'SAVEit-fast';
-    downloadMediaDirectly(sourceUrl, `${baseName}.${fileExtension}`);
-    setTimeout(() => {
-      setDownloadingFormat(null);
-    }, 1200);
+    setIsMintingToken(true);
+    setTokenExpiryAlert(null);
+
+    try {
+      const downloadUrl = await requestDownloadToken(targetUrl, qualityParam);
+      initiateTokenStreamDownload(downloadUrl);
+    } catch (err: any) {
+      console.error('Download token failure:', err);
+      const msg = err?.message || 'Download token error';
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('410') || msg.toLowerCase().includes('expire')) {
+        setTokenExpiryAlert({
+          quality: qualityParam,
+          formatKey,
+          message: 'Your download token has expired (15-min expiration limit). Please regenerate below.'
+        });
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setIsMintingToken(false);
+      setTimeout(() => {
+        setDownloadingFormat(null);
+      }, 2200);
+    }
   };
 
   const handlePosterDownload = async (posterUrl: string | undefined, formatKey: string) => {
@@ -346,19 +382,44 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
 
               {/* Action content based on active tab */}
               <div className="w-full max-w-md mb-8">
+                {/* Token Expiry Alert */}
+                {tokenExpiryAlert && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 flex flex-col sm:flex-row items-center justify-between gap-3 text-left shadow-lg"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Lock className="shrink-0 text-amber-500" size={18} />
+                      <div>
+                        <p className="text-xs font-black">{tokenExpiryAlert.message}</p>
+                        <span className="text-[10px] text-amber-500/80">Token validity: 15-minute window</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadWithToken(tokenExpiryAlert.quality, tokenExpiryAlert.formatKey)}
+                      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-black font-black text-xs flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                    >
+                      <RefreshCw size={12} className={isMintingToken ? "animate-spin" : ""} />
+                      <span>Regenerate</span>
+                    </button>
+                  </motion.div>
+                )}
+
                 {activeTab === 'video' && (
                   <div className="space-y-4">
                     {media.videoUrl && (
                       <button 
                         type="button"
-                        onClick={() => handleDownload(media.videoUrl, 'fast-video', 'mp4')}
-                        disabled={downloadingFormat === 'fast-video'}
+                        onClick={() => handleDownloadWithToken('1080p', 'fast-video')}
+                        disabled={isMintingToken}
                         className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-red-500/30 transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75"
                       >
                         {downloadingFormat === 'fast-video' ? (
                           <>
-                            <RefreshCw size={18} className="animate-spin" />
-                            <span>Downloading...</span>
+                            <ShieldCheck size={18} className="animate-pulse" />
+                            <span>Minting Token &amp; Stream...</span>
                           </>
                         ) : (
                           <>
@@ -373,8 +434,9 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                     {videoQualities.length > 0 && (
                       <div className="pt-2">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">
-                            Quality Options:
+                          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                            <ShieldCheck size={12} className="text-emerald-500" />
+                            <span>Token Protected Streams:</span>
                           </span>
                           <span className="text-[10px] font-bold text-brand bg-brand/10 px-2 py-0.5 rounded">
                             {videoQualities.length} {videoQualities.length === 1 ? 'Resolution' : 'Resolutions'}
@@ -383,6 +445,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {videoQualities.map((q, idx) => {
                             const isThisDownloading = downloadingFormat === `fast-q-${idx}`;
+                            const qualityParam = q.rawQuality || (q.qualityNum ? `${q.qualityNum}p` : q.quality) || '1080p';
 
                             return (
                               <div
@@ -413,13 +476,13 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                                 <div className="shrink-0">
                                   <button
                                     type="button"
-                                    onClick={() => handleDownload(q.downloadUrl || q.url, `fast-q-${idx}`, (q.container || 'mp4').toLowerCase())}
-                                    disabled={isThisDownloading}
-                                    className="p-2 rounded-lg bg-brand hover:bg-red-600 text-white transition-all cursor-pointer shadow-sm active:scale-95"
-                                    title="Download resolution"
+                                    onClick={() => handleDownloadWithToken(qualityParam, `fast-q-${idx}`)}
+                                    disabled={isMintingToken}
+                                    className="p-2 rounded-lg bg-brand hover:bg-red-600 text-white transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-75"
+                                    title="Mint Token & Download"
                                   >
                                     {isThisDownloading ? (
-                                      <CheckCircle2 size={14} className="animate-bounce" />
+                                      <RefreshCw size={14} className="animate-spin" />
                                     ) : (
                                       <Download size={14} />
                                     )}
@@ -439,8 +502,8 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                     {(media.audioUrl || media.musicUrl) ? (
                       <button 
                         type="button"
-                        onClick={() => handleDownload(media.audioUrl || media.musicUrl, 'fast-audio', 'mp3')}
-                        disabled={downloadingFormat === 'fast-audio'}
+                        onClick={() => handleDownloadWithToken('audio', 'fast-audio')}
+                        disabled={isMintingToken}
                         className={`w-full font-black uppercase tracking-[2px] py-4 rounded-xl flex items-center justify-center gap-2 border transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-75 ${
                           isDarkMode 
                             ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700' 
@@ -449,8 +512,8 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                       >
                         {downloadingFormat === 'fast-audio' ? (
                           <>
-                            <RefreshCw size={18} className="animate-spin" />
-                            <span>Downloading...</span>
+                            <ShieldCheck size={18} className="animate-pulse" />
+                            <span>Minting Audio Stream...</span>
                           </>
                         ) : (
                           <>
@@ -460,7 +523,7 @@ export default function FastDownload({ isDarkMode }: FastDownloadProps) {
                         )}
                       </button>
                     ) : (
-                      <p className="text-sm text-zinc-400 text-center">Audio stream unavailable.</p>
+                      <p className="text-xs text-zinc-500">Audio stream will be generated on request.</p>
                     )}
                   </div>
                 )}

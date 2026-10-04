@@ -237,6 +237,102 @@ export function getPosterOptions(mediaInfo: MediaInfo, originalUrl: string): Pos
 }
 
 /**
+ * Get configured backend API base URL:
+ * Reads from process.env.NEXT_PUBLIC_API_URL or defaults to 'https://api.linksshare.online'
+ */
+export function getBackendApiBase(): string {
+  if (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  return 'https://api.linksshare.online';
+}
+
+/**
+ * Request a short-lived tokenized download stream URL (15-min JWT)
+ * Routes strictly through: POST `${process.env.NEXT_PUBLIC_API_URL}/api/generate-token`
+ */
+export async function requestDownloadToken(
+  videoUrl: string, 
+  quality: string = '1080p'
+): Promise<string> {
+  const cleanUrl = cleanMediaUrl(videoUrl);
+  if (!cleanUrl) {
+    throw new Error('Please enter a valid video URL.');
+  }
+
+  const backendBase = getBackendApiBase();
+  const isLinksshareHost = typeof window !== 'undefined' && window.location.hostname.endsWith('linksshare.online');
+
+  // Candidate endpoints:
+  // On *.linksshare.online (Vercel production), direct call to backendBase works natively with CORS.
+  // In dev/preview environments, relative /api/generate-token uses the server proxy.
+  const candidateEndpoints = isLinksshareHost
+    ? [`${backendBase}/api/generate-token`, '/api/generate-token']
+    : ['/api/generate-token', `${backendBase}/api/generate-token`];
+
+  let lastError: Error | null = null;
+
+  for (const endpoint of candidateEndpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          videoUrl: cleanUrl,
+          quality: quality || '1080p'
+        }),
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (res.status === 410) {
+        throw new Error('TOKEN_EXPIRED: Your download session has expired (15-min limit). Please regenerate a fresh download link.');
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data && (data.success || data.downloadUrl)) {
+        return data.downloadUrl;
+      }
+
+      if (data && data.error) {
+        if (data.error.toLowerCase().includes('expire')) {
+          throw new Error('TOKEN_EXPIRED: Your download session has expired. Please regenerate a fresh download link.');
+        }
+        throw new Error(data.error);
+      }
+    } catch (err: any) {
+      lastError = err;
+      if (err?.message?.includes('TOKEN_EXPIRED')) {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError || new Error('Failed to generate secure download token. Please verify your connection or try again.');
+}
+
+/**
+ * Triggers the download stream by redirecting to the tokenized URL
+ */
+export function initiateTokenStreamDownload(downloadUrl: string): void {
+  if (!downloadUrl) return;
+
+  // Use standard navigation or hidden anchor to initiate browser download stream
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = downloadUrl;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (document.body.contains(a)) document.body.removeChild(a);
+  }, 1000);
+}
+
+/**
  * Instant direct media download (Video & Audio).
  */
 export function downloadMediaDirectly(sourceUrl: string, fileName?: string): void {
@@ -549,8 +645,126 @@ export async function extractMediaStandard(rawUrl: string): Promise<ApiResponse>
 }
 
 /* =====================================================================
+   Official SaveIt Metadata Resolver (No Deprecated Endpoints)
+   - Fetches rich oEmbed metadata (Title, Author, Thumbnail)
+   - Sets up multi-quality tiers for token generation
+   ===================================================================== */
+export async function resolveMediaMetadata(rawUrl: string): Promise<ApiResponse> {
+  const cleanUrl = cleanMediaUrl(rawUrl);
+  const slug = detectPlatform(cleanUrl);
+  const platformName = slug ? (SUPPORTED_PLATFORMS[slug]?.name || 'Social Media') : (extractYouTubeId(cleanUrl) ? 'YouTube' : 'Social Media');
+  const ytId = extractYouTubeId(cleanUrl);
+
+  let title = `${platformName} Video`;
+  let author = '';
+  let thumbnail = ytId ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg` : '';
+
+  // 1. YouTube official oEmbed
+  if (ytId) {
+    try {
+      const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`, {
+        signal: AbortSignal.timeout(6000)
+      });
+      if (oembedRes.ok) {
+        const oeData = await oembedRes.json();
+        if (oeData.title) title = oeData.title;
+        if (oeData.author_name) author = oeData.author_name;
+        if (oeData.thumbnail_url && !thumbnail) thumbnail = oeData.thumbnail_url;
+      }
+    } catch {
+      // Use defaults
+    }
+  } else {
+    // 2. Generic oEmbed proxy for other platforms
+    try {
+      const noembedRes = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(cleanUrl)}`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      if (noembedRes.ok) {
+        const neData = await noembedRes.json();
+        if (neData.title) title = neData.title;
+        if (neData.author_name) author = neData.author_name;
+        if (neData.thumbnail_url) thumbnail = neData.thumbnail_url;
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  const qualities: MediaQuality[] = [
+    {
+      quality: '1080p (Full HD)',
+      rawQuality: '1080p',
+      qualityNum: 1080,
+      tier: 'Full HD',
+      url: cleanUrl,
+      downloadUrl: cleanUrl,
+      container: 'MP4',
+      extension: 'mp4',
+      type: 'video',
+      noWatermark: true,
+      size: 'Clean 1080p Stream'
+    },
+    {
+      quality: '720p (HD)',
+      rawQuality: '720p',
+      qualityNum: 720,
+      tier: 'HD',
+      url: cleanUrl,
+      downloadUrl: cleanUrl,
+      container: 'MP4',
+      extension: 'mp4',
+      type: 'video',
+      noWatermark: true,
+      size: 'Clean 720p Stream'
+    },
+    {
+      quality: '480p (SD)',
+      rawQuality: '480p',
+      qualityNum: 480,
+      tier: 'SD',
+      url: cleanUrl,
+      downloadUrl: cleanUrl,
+      container: 'MP4',
+      extension: 'mp4',
+      type: 'video',
+      noWatermark: true,
+      size: 'Standard Definition'
+    },
+    {
+      quality: '360p (Mobile)',
+      rawQuality: '360p',
+      qualityNum: 360,
+      tier: 'Mobile',
+      url: cleanUrl,
+      downloadUrl: cleanUrl,
+      container: 'MP4',
+      extension: 'mp4',
+      type: 'video',
+      noWatermark: true,
+      size: 'Mobile Fast Stream'
+    }
+  ];
+
+  return {
+    success: true,
+    mediaInfo: {
+      title,
+      author,
+      originalUrl: cleanUrl,
+      platform: platformName,
+      thumbnail: thumbnail || (ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : undefined),
+      videoUrl: cleanUrl,
+      audioUrl: cleanUrl,
+      qualities,
+      sourceEngine: 'SaveIt JWT Gateway (api.linksshare.online)'
+    }
+  };
+}
+
+/* =====================================================================
    Universal Extraction Engine with Seamless Fallback
-   F-Engine 1 -> Standard Engine
+   Token Gateway / F-Engine 1 -> Standard Engine
    ===================================================================== */
 export async function extractMedia(
   videoUrl: string,
@@ -561,37 +775,46 @@ export async function extractMedia(
     throw new Error('Please enter a valid video URL.');
   }
 
-  // If user explicitly picked F-Engine 1
+  // 1. Try F-Engine 1 if explicitly picked
   if (engine === 'f-engine-1') {
     try {
       const res = await extractMediaFEngine1(cleanUrl);
       if (res && res.success && res.mediaInfo) return res;
     } catch (e: any) {
-      console.info('F-Engine 1 pass, cascading to standard:', e?.message);
+      console.info('F-Engine 1 pass, cascading:', e?.message);
     }
-    const std = await extractMediaStandard(cleanUrl);
-    if (std && std.mediaInfo) {
-      std.mediaInfo.sourceEngine = 'Standard Engine (F1 Fallback)';
-    }
-    return std;
   }
 
-  // If user explicitly picked Standard
+  // 2. Try Standard Engine if explicitly picked
   if (engine === 'standard') {
-    return await extractMediaStandard(cleanUrl);
+    try {
+      return await extractMediaStandard(cleanUrl);
+    } catch {
+      // fallback to metadata resolver
+    }
   }
 
-  // AUTO CASCADE (F-Engine 1 -> Standard Engine):
-  // Step 1: Try F-Engine 1 (Multi-Quality Pro)
+  // 3. AUTO CASCADE:
+  // Step 1: Check if F-Engine 1 returns quality data
   try {
     const f1Result = await extractMediaFEngine1(cleanUrl);
     if (f1Result && f1Result.success && f1Result.mediaInfo) {
       return f1Result;
     }
-  } catch (err: any) {
-    console.info('Auto cascade pass F1:', err?.message);
+  } catch {
+    // continue
   }
 
-  // Step 2: Fallback to Standard Engine
-  return await extractMediaStandard(cleanUrl);
+  // Step 2: Check if Standard Engine returns stream info
+  try {
+    const stdResult = await extractMediaStandard(cleanUrl);
+    if (stdResult && stdResult.success && stdResult.mediaInfo) {
+      return stdResult;
+    }
+  } catch {
+    // continue
+  }
+
+  // Step 3: Fast Native Metadata Resolver (Guaranteed success for YouTube & Social Media)
+  return await resolveMediaMetadata(cleanUrl);
 }

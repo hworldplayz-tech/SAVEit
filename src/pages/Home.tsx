@@ -16,7 +16,9 @@ import {
   Sparkles,
   CheckCircle2,
   Radio,
-  Layers
+  Layers,
+  Lock,
+  ExternalLink
 } from 'lucide-react';
 import { 
   extractMedia, 
@@ -25,6 +27,8 @@ import {
   downloadMediaDirectly,
   downloadPosterDirectly,
   cleanMediaUrl,
+  requestDownloadToken,
+  initiateTokenStreamDownload,
   PosterOption,
   EngineChoice,
   deduplicateQualities
@@ -50,6 +54,12 @@ export default function Home({ isDarkMode }: HomeProps) {
 
   // Download state for visual button feedback
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [isMintingToken, setIsMintingToken] = useState(false);
+  const [tokenExpiryAlert, setTokenExpiryAlert] = useState<{
+    quality: string;
+    formatKey: string;
+    message: string;
+  } | null>(null);
 
   // Engine selection state: 'auto' | 'f-engine-1' | 'standard'
   const [selectedEngine, setSelectedEngine] = useState<EngineChoice>('auto');
@@ -81,6 +91,7 @@ export default function Home({ isDarkMode }: HomeProps) {
 
     setLoading(true);
     setError(null);
+    setTokenExpiryAlert(null);
     setMediaInfo(null);
     setIsPlayingPreview(false);
     setPreviewPoster(null);
@@ -106,19 +117,40 @@ export default function Home({ isDarkMode }: HomeProps) {
   };
 
   /**
-   * Triggers download immediately without delay, memory buffering, or popup blocking.
+   * Tokenized Download Handler:
+   * Requests JWT token via POST ${process.env.NEXT_PUBLIC_API_URL}/api/generate-token
+   * and initiates direct download stream via the returned downloadUrl.
    */
-  const handleDownloadAction = (sourceUrl: string | undefined, formatKey: string, fileExtension: string) => {
-    if (!sourceUrl) return;
+  const handleDownloadWithToken = async (qualityParam: string = '1080p', formatKey: string) => {
+    const targetUrl = submittedUrl || url;
+    if (!targetUrl) return;
 
     setDownloadingFormat(formatKey);
-    const baseName = mediaInfo?.title || 'SAVEit-media';
-    const cleanFileName = `${baseName}.${fileExtension}`;
-    downloadMediaDirectly(sourceUrl, cleanFileName);
+    setIsMintingToken(true);
+    setTokenExpiryAlert(null);
 
-    setTimeout(() => {
-      setDownloadingFormat(null);
-    }, 1200);
+    try {
+      const downloadUrl = await requestDownloadToken(targetUrl, qualityParam);
+      // Redirect user directly to downloadUrl to initiate the secure download stream
+      initiateTokenStreamDownload(downloadUrl);
+    } catch (err: any) {
+      console.error('Download token failure:', err);
+      const msg = err?.message || 'Download token error';
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('410') || msg.toLowerCase().includes('expire')) {
+        setTokenExpiryAlert({
+          quality: qualityParam,
+          formatKey,
+          message: 'Your download token has expired (15-minute expiration limit). Please regenerate a new link below.'
+        });
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setIsMintingToken(false);
+      setTimeout(() => {
+        setDownloadingFormat(null);
+      }, 2200);
+    }
   };
 
   /**
@@ -142,6 +174,7 @@ export default function Home({ isDarkMode }: HomeProps) {
     setSubmittedUrl('');
     setMediaInfo(null);
     setError(null);
+    setTokenExpiryAlert(null);
     setIsPlayingPreview(false);
     setPreviewPoster(null);
   };
@@ -553,21 +586,47 @@ export default function Home({ isDarkMode }: HomeProps) {
                   </div>
 
                   {/* Action Section based on Active Tab */}
+                  {/* Token Expiry Alert Prompt */}
+                  {tokenExpiryAlert && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mb-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Lock className="shrink-0 text-amber-500" size={20} />
+                        <div>
+                          <p className="text-xs font-black">{tokenExpiryAlert.message}</p>
+                          <span className="text-[10px] text-amber-500/80">Security Token Expiration: 15-minute validity window</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadWithToken(tokenExpiryAlert.quality, tokenExpiryAlert.formatKey)}
+                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer shrink-0 shadow-md active:scale-95"
+                      >
+                        <RefreshCw size={13} className={isMintingToken ? "animate-spin" : ""} />
+                        <span>Regenerate Download Link</span>
+                      </button>
+                    </motion.div>
+                  )}
+
                   {activeTab === 'video' && (
                     <div className="space-y-4">
-                      {/* Primary Video Download Button (Full Width, No Copy Button for API Privacy) */}
+                      {/* Primary Video Download Button */}
                       {mediaInfo.videoUrl ? (
                         <div>
                           <button
                             id="main-download-video-btn"
                             type="button"
-                            onClick={() => handleDownloadAction(mediaInfo.videoUrl, 'video-primary', 'mp4')}
-                            className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
+                            onClick={() => handleDownloadWithToken('1080p', 'video-primary')}
+                            disabled={isMintingToken}
+                            className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-80"
                           >
                             {downloadingFormat === 'video-primary' ? (
                               <>
-                                <CheckCircle2 size={20} className="text-white animate-bounce" />
-                                <span>Starting Download...</span>
+                                <ShieldCheck size={20} className="text-white animate-pulse" />
+                                <span>Minting Token &amp; Starting Stream...</span>
                               </>
                             ) : (
                               <>
@@ -579,12 +638,13 @@ export default function Home({ isDarkMode }: HomeProps) {
                         </div>
                       ) : null}
 
-                      {/* Video Qualities Section (Direct Download Button only, No Copy Button) */}
+                      {/* Video Qualities Section (Direct Download Button with Secure Token) */}
                       {videoQualities.length > 0 && (
                         <div className="pt-2">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-[11px] font-black uppercase tracking-wider text-zinc-400">
-                              Available Resolutions &amp; Qualities:
+                            <span className="text-[11px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                              <ShieldCheck size={13} className="text-emerald-500" />
+                              <span>Available Resolutions (Token Protected):</span>
                             </span>
                             <span className="text-[10px] font-bold text-brand bg-brand/10 px-2 py-0.5 rounded">
                               {videoQualities.length} {videoQualities.length === 1 ? 'Option' : 'Options'}
@@ -595,6 +655,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                             {videoQualities.map((q, idx) => {
                               const qualityKey = `quality-${idx}-${q.quality}-${q.container || ''}`;
                               const isThisDownloading = downloadingFormat === qualityKey;
+                              const qualityParam = q.rawQuality || (q.qualityNum ? `${q.qualityNum}p` : q.quality) || '1080p';
 
                               return (
                                 <div
@@ -628,12 +689,13 @@ export default function Home({ isDarkMode }: HomeProps) {
                                   <div className="shrink-0">
                                     <button
                                       type="button"
-                                      onClick={() => handleDownloadAction(q.downloadUrl || q.url, qualityKey, (q.container || 'mp4').toLowerCase())}
-                                      className="p-2.5 rounded-xl bg-brand hover:bg-red-600 text-white flex items-center justify-center transition-all cursor-pointer shadow-md shadow-brand/20 active:scale-95"
-                                      title="Download Format"
+                                      onClick={() => handleDownloadWithToken(qualityParam, qualityKey)}
+                                      disabled={isMintingToken}
+                                      className="p-2.5 rounded-xl bg-brand hover:bg-red-600 text-white flex items-center justify-center transition-all cursor-pointer shadow-md shadow-brand/20 active:scale-95 disabled:opacity-75"
+                                      title="Generate Token & Download"
                                     >
                                       {isThisDownloading ? (
-                                        <CheckCircle2 size={16} className="text-white animate-bounce" />
+                                        <RefreshCw size={16} className="text-white animate-spin" />
                                       ) : (
                                         <Download size={16} />
                                       )}
@@ -655,13 +717,14 @@ export default function Home({ isDarkMode }: HomeProps) {
                           <button
                             id="main-download-audio-btn"
                             type="button"
-                            onClick={() => handleDownloadAction(mediaInfo.audioUrl || mediaInfo.musicUrl, 'audio-primary', 'mp3')}
-                            className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer"
+                            onClick={() => handleDownloadWithToken('audio', 'audio-primary')}
+                            disabled={isMintingToken}
+                            className="w-full bg-brand hover:bg-red-600 text-white font-black uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-500/25 hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-80"
                           >
                             {downloadingFormat === 'audio-primary' ? (
                               <>
-                                <CheckCircle2 size={20} className="text-white animate-bounce" />
-                                <span>Starting Download...</span>
+                                <ShieldCheck size={20} className="text-white animate-pulse" />
+                                <span>Minting Audio Token &amp; Starting Stream...</span>
                               </>
                             ) : (
                               <>
@@ -672,7 +735,7 @@ export default function Home({ isDarkMode }: HomeProps) {
                           </button>
                         </div>
                       ) : (
-                        <p className="text-sm text-zinc-400">Audio-only stream is not available for this specific link.</p>
+                        <p className="text-sm text-zinc-400">Audio stream will be extracted upon token generation.</p>
                       )}
                     </div>
                   )}
